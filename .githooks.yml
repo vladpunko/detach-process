@@ -1,0 +1,10 @@
+---
+repos:
+  # Set the list of basic git hooks to find and fix common problems in the current working tree.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.0.1
+    hooks:
+      - id: check-executables-have-shebangs
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
