@@ -27,6 +27,6 @@ gcc -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${work
 install -m 755 "${workdir}/detach" /usr/local/bin/detach
 
 _cleanup() {
-  rm -r -- "${workdir}"
+  rm -f -r -- "${workdir}"
 }
-trap _cleanup EXIT
+trap _cleanup 0 1 2 3 6
