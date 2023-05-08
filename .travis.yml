@@ -1,8 +1,0 @@
-language: c
-
-compiler:
-  - clang  # it is the preferred compiler for mac operating systems
-  - gcc
-
-script:
-  - ${CC} -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
