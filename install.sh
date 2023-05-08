@@ -13,6 +13,11 @@ fi
 
 workdir="$(mktemp -d)"
 
+_cleanup() {
+  rm -f -r -- "${workdir}"
+}
+trap _cleanup 0 1 2 3 6
+
 # Step -- 1.
 git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-process.git "${workdir}" > /dev/null 2>&1 || {
   echo 'An error occurred while downloading the source code to the current machine.' >&2
@@ -25,8 +30,3 @@ gcc -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${work
 
 # Step -- 3.
 install -m 755 "${workdir}/detach" /usr/local/bin/detach
-
-_cleanup() {
-  rm -f -r -- "${workdir}"
-}
-trap _cleanup 0 1 2 3 6

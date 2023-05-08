@@ -1,5 +1,7 @@
 # detach-process
 
+![build](https://github.com/vladpunko/detach-process/actions/workflows/build.yml/badge.svg)
+
 Spawn a new process and detach it from the current interactive session.
 
 ![usage-example](https://raw.githubusercontent.com/vladpunko/detach-process/master/detach.gif)
