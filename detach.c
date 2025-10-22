@@ -1,3 +1,5 @@
+// -*- coding: utf-8 -*-
+
 // Copyright 2020 (c) Vladislav Punko <iam.vlad.punko@gmail.com>
 
 #include <fcntl.h>
@@ -5,7 +7,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char *argv[])
+{
     if (argc < 2) {
         perror("insufficient number of arguments");
 
@@ -38,7 +42,7 @@ int main(int argc, char* argv[]) {
     }
 
     // New stdout.
-    FILE* tmp_out = tmpfile();
+    FILE *tmp_out = tmpfile();
     if (!tmp_out) {
         perror("stdout");
 
@@ -47,7 +51,7 @@ int main(int argc, char* argv[]) {
     dup2(fileno(tmp_out), STDOUT_FILENO);
 
     // New stderr.
-    FILE* tmp_err = tmpfile();
+    FILE *tmp_err = tmpfile();
     if (!tmp_err) {
         perror("stderr");
 
