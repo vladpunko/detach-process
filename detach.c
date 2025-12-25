@@ -16,9 +16,34 @@ main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    // New stdout.
+    char stdout_path[] = "/tmp/stdout.XXXXXX";
+    int fd_stdout = mkstemp(stdout_path);
+    if (fd_stdout < 0) {
+        perror("stdout");
+
+        return EXIT_FAILURE;
+    }
+
+    // New stderr.
+    char stderr_path[] = "/tmp/stderr.XXXXXX";
+    int fd_stderr = mkstemp(stderr_path);
+    if (fd_stderr < 0) {
+        perror("stderr");
+
+        return EXIT_FAILURE;
+    }
+
     // Create a new process.
     pid_t pid = fork();
     if (pid > 0) {
+        printf("PID: %d\n", pid);
+        printf("stdout: %s\n", stdout_path);
+        printf("stderr: %s\n", stderr_path);
+
+        close(fd_stdout);
+        close(fd_stderr);
+
         return EXIT_SUCCESS;
     } else if (pid < 0) {
         perror("fork");
@@ -27,7 +52,11 @@ main(int argc, char *argv[])
     }
 
     // Create a new session.
-    setsid();
+    if (setsid() < 0) {
+        perror("setsid");
+
+        return EXIT_FAILURE;
+    }
 
     // New stdin.
     int fd_stdin = open("/dev/null", O_RDONLY);
@@ -41,26 +70,21 @@ main(int argc, char *argv[])
         close(fd_stdin);
     }
 
-    // New stdout.
-    FILE *tmp_out = tmpfile();
-    if (!tmp_out) {
-        perror("stdout");
-
-        return EXIT_FAILURE;
+    // Redirect stdout.
+    dup2(fd_stdout, STDOUT_FILENO);
+    if (fd_stdout > STDOUT_FILENO) {
+        close(fd_stdout);
     }
-    dup2(fileno(tmp_out), STDOUT_FILENO);
 
-    // New stderr.
-    FILE *tmp_err = tmpfile();
-    if (!tmp_err) {
-        perror("stderr");
-
-        return EXIT_FAILURE;
+    // Redirect stderr.
+    dup2(fd_stderr, STDERR_FILENO);
+    if (fd_stderr > STDERR_FILENO) {
+        close(fd_stderr);
     }
-    dup2(fileno(tmp_err), STDERR_FILENO);
 
     // Start a program in a new session on the current operating system.
     execvp(argv[1], &argv[1]);
+    perror("exec");
 
     return EXIT_FAILURE;
 }
