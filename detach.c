@@ -1,6 +1,7 @@
 // -*- coding: utf-8 -*-
 
-// Copyright 2020 (c) Vladislav Punko <iam.vlad.punko@gmail.com>
+// Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
+// Created date: 2021-07-04
 
 #include <fcntl.h>
 #include <stdio.h>
