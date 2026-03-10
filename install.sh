@@ -31,3 +31,8 @@ gcc -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${work
 
 # Step -- 3.
 install -m 755 "${workdir}/detach" /usr/local/bin/detach
+
+# Step -- 4.
+mandir="${MANDIR:-/usr/local/share/man}"
+install -d -m 755 "${mandir}/man1"
+install -m 644 "${workdir}/detach.1" "${mandir}/man1/detach.1"
