@@ -14,7 +14,9 @@ Make sure the installed [gcc](https://gcc.gnu.org/install) compilers work withou
 sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh)"
 ```
 
-You can also install this system package on your working machine (works for unix-like operating systems) from source code to `/usr/local/bin` as the standard system location for user's programs (this location can be changed at the user's discretion):
+The install script defaults to `/usr/local/bin` for the binary and `/usr/share/man` for the man page. You can override it with `BINDIR` and `MANDIR`.
+
+You can also install this system package on your working machine (works for unix-like operating systems) from source code to a system location:
 
 ```bash
 # Step -- 1.
