@@ -12,7 +12,9 @@ Detaching a long-running command usually means juggling `nohup`, backgrounding, 
 
 ## Installation
 
-Make sure the installed [gcc](https://gcc.gnu.org/install) compilers work without errors on the current operating system. To install this package as a standalone application with the command-line interface you are to run the following command:
+Requirements: a Unix-like OS with [git](https://git-scm.com/downloads), a C compiler such as [gcc](https://gcc.gnu.org/install), and `install` (from [coreutils](https://www.gnu.org/software/coreutils/)). For the one-line installer you also need [curl](https://curl.se/download.html) and `sudo`.
+
+To install this package as a standalone application with the command-line interface you are to run the following command:
 
 ```bash
 sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh)"
@@ -37,12 +39,22 @@ sudo install -m 755 detach /usr/local/bin/detach
 sudo install -m 644 detach.1 /usr/local/share/man/man1/detach.1
 ```
 
+## Uninstall
+
+If you installed to the default paths, remove the binary and the man page:
+
+```bash
+sudo rm -f /usr/local/bin/detach /usr/local/share/man/man1/detach.1
+```
+
+If you installed to a different location, remove those files instead.
+
 ## Basic usage
 
 Using this program allows you to create a new detached process avoiding complex shell pipelines in the current interactive session. It protects you from the trouble of closing an application which is the parent process of a different program.
 
 ```bash
-detach -- ping -c 10 google.com  # pgrep ping | xargs ps -p
+detach ping -c 10 google.com  # pgrep ping | xargs ps -p
 ```
 
 Use `--` to separate detach's options from the command you want to run. This is
@@ -54,7 +66,7 @@ You can write the PID and the standard output and error to specific files:
 detach --pid ping.pid --stdout ping.out --stderr ping.err -- ping -c 10 google.com
 ```
 
-Usage of reading:
+Use the standard input from a file:
 
 ```bash
 detach --stdin README.md --stdout cat.out -- cat
