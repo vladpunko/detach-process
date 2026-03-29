@@ -34,6 +34,7 @@ gcc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
 
 # Step -- 4.
 sudo install -m 755 detach /usr/local/bin/detach
+sudo install -m 644 detach.1 /usr/local/share/man/man1/detach.1
 ```
 
 ## Basic usage
@@ -50,8 +51,13 @@ required when options are used.
 You can write the PID and the standard output and error to specific files:
 
 ```bash
-detach --pid /tmp/ping.pid --stdout /tmp/ping.out --stderr /tmp/ping.err -- ping -c 10 google.com
-detach --stdin /path/to/input.txt --stdout /tmp/cat.out -- cat
+detach --pid ping.pid --stdout ping.out --stderr ping.err -- ping -c 10 google.com
+```
+
+Usage of reading:
+
+```bash
+detach --stdin README.md --stdout cat.out -- cat
 ```
 
 Show usage:
