@@ -6,6 +6,10 @@ Spawn a new process and detach it from the current interactive session.
 
 ![usage-example](https://raw.githubusercontent.com/vladpunko/detach-process/master/detach.gif)
 
+## Motivation
+
+Detaching a long-running command usually means juggling `nohup`, backgrounding, `disown`, and redirections. This tool simplifies that workflow into one predictable command and reports the PID and output paths for easy scripting.
+
 ## Installation
 
 Make sure the installed [gcc](https://gcc.gnu.org/install) compilers work without errors on the current operating system. To install this package as a standalone application with the command-line interface you are to run the following command:
@@ -37,7 +41,23 @@ sudo install -m 755 detach /usr/local/bin/detach
 Using this program allows you to create a new detached process avoiding complex shell pipelines in the current interactive session. It protects you from the trouble of closing an application which is the parent process of a different program.
 
 ```bash
-detach ping -c 10 google.com  # pgrep ping | xargs ps -p
+detach -- ping -c 10 google.com  # pgrep ping | xargs ps -p
+```
+
+Use `--` to separate detach's options from the command you want to run. This is
+required when options are used.
+
+You can write the PID and the standard output and error to specific files:
+
+```bash
+detach --pid /tmp/ping.pid --stdout /tmp/ping.out --stderr /tmp/ping.err -- ping -c 10 google.com
+detach --stdin /path/to/input.txt --stdout /tmp/cat.out -- cat
+```
+
+Show usage:
+
+```bash
+detach --help
 ```
 
 ## Contributing
