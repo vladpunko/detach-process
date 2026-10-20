@@ -236,15 +236,13 @@ static int receive_process_id(int fd, pid_t *pid) {
     return TRUE;
 }
 
-static int report_startup_failure(int startup_fd) {
-    // Notify the parent before exiting after a setup or exec failure.
+static void report_startup_failure(int startup_fd) {
+    // Notify the parent even if it may already have closed the channel.
     char failed = TRUE;
     ssize_t written;
     do {
         written = send(startup_fd, &failed, sizeof(failed), MSG_NOSIGNAL);
     } while (written < 0 && errno == EINTR);
-
-    return EXIT_FAILURE;
 }
 
 static void print_error_log(int fd) {
@@ -426,6 +424,7 @@ int main(int argc, char *argv[]) {
     char stderr_template[] = "/tmp/stderr.XXXXXX";
     int stdout_is_temporary = FALSE;
     int stderr_is_temporary = FALSE;
+    int failure_report_fd = -1;
 
     // Keep existing contents until the PID file has been checked.
     // New stdout.
@@ -673,7 +672,7 @@ int main(int argc, char *argv[]) {
         perror("setsid");
         send_process_id(child_startup_fd, 0);
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     // The final child inherits the session without becoming its leader.
@@ -682,7 +681,7 @@ int main(int argc, char *argv[]) {
         perror("fork");
         send_process_id(child_startup_fd, 0);
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
     if (program_pid > 0) {
         // Exit without flushing the inherited stdio buffers.
@@ -703,7 +702,7 @@ int main(int argc, char *argv[]) {
     if (received < 0) {
         perror("startup channel");
 
-        return report_startup_failure(child_startup_fd);
+        goto child_startup_failed;
     }
     if (received != sizeof(ready) || ready != TRUE) {
         goto startup_failed;
@@ -711,33 +710,35 @@ int main(int argc, char *argv[]) {
 
     // Redirect stdin.
     if (!redirect_standard_descriptor(fd_stdin, STDIN_FILENO, "stdin")) {
-        return report_startup_failure(child_startup_fd);
+        goto child_startup_failed;
     }
 
     // Redirect stdout.
     if (!redirect_standard_descriptor(fd_stdout, STDOUT_FILENO, "stdout")) {
-        return report_startup_failure(child_startup_fd);
+        goto child_startup_failed;
     }
 
     // Redirect stderr.
     if (!redirect_standard_descriptor(fd_stderr, STDERR_FILENO, "stderr")) {
-        return report_startup_failure(child_startup_fd);
+        goto child_startup_failed;
     }
 
     // Close inherited files, pipes, and sockets before starting the program.
     if (!close_inherited_descriptors(child_startup_fd)) {
-        return report_startup_failure(child_startup_fd);
+        goto child_startup_failed;
     }
 
     // Start a program in a new session on the current operating system.
     execvp(argv[optind], &argv[optind]);
     perror("exec");
 
-    return report_startup_failure(child_startup_fd);
+child_startup_failed:
+    // Finish cleanup before the parent starts reading the diagnostic log.
+    failure_report_fd = child_startup_fd;
 
 startup_failed:
     // Remove only files created by mkstemp, never user-selected paths.
-    // ENOENT is harmless if the parent already removed them before exiting.
+    // ENOENT is harmless if the other process has already removed them.
     if (stdout_is_temporary) {
         if (unlink(stdout_template) < 0 && errno != ENOENT) {
             perror(stdout_template);
@@ -747,6 +748,10 @@ startup_failed:
         if (unlink(stderr_template) < 0 && errno != ENOENT) {
             perror(stderr_template);
         }
+    }
+    // Cleanup diagnostics are complete before the parent receives the failure.
+    if (failure_report_fd >= 0) {
+        report_startup_failure(failure_report_fd);
     }
     return EXIT_FAILURE;
 }
