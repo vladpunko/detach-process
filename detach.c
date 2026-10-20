@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // Boolean macros for readability in this file.
@@ -256,6 +257,30 @@ int main(int argc, char *argv[]) {
     } else {
         fd_stderr = open(stderr_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
         if (fd_stderr < 0) {
+            perror("stderr");
+
+            return EXIT_FAILURE;
+        }
+    }
+
+    struct stat stdout_stat;
+    if (fstat(fd_stdout, &stdout_stat) < 0) {
+        perror("stdout");
+
+        return EXIT_FAILURE;
+    }
+
+    struct stat stderr_stat;
+    if (fstat(fd_stderr, &stderr_stat) < 0) {
+        perror("stderr");
+
+        return EXIT_FAILURE;
+    }
+
+    // Share the file offset when both streams refer to the same file.
+    if (stdout_stat.st_dev == stderr_stat.st_dev &&
+        stdout_stat.st_ino == stderr_stat.st_ino) {
+        if (dup2(fd_stdout, fd_stderr) < 0) {
             perror("stderr");
 
             return EXIT_FAILURE;
