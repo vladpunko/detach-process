@@ -3,6 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2021-07-04
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
