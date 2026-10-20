@@ -349,9 +349,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Track option usage for the required separator rule.
-        if (opt == 'i' || opt == 'o' || opt == 'e' || opt == 'p') {
-            options_present = TRUE;
-        }
+        options_present = TRUE;
         next_argument = optind;
     }
 
