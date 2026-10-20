@@ -156,11 +156,13 @@ static int close_inherited_descriptors(int startup_fd) {
 }
 
 static int send_process_id(int fd, pid_t pid) {
-    // A stream socket may transfer the PID in several writes.
+    // A stream socket may transfer the PID in several sends.
+    // MSG_NOSIGNAL lets a closed channel return an error without SIGPIPE.
     const char *data = (const char *)&pid;
     size_t sent = 0;
     while (sent < sizeof(pid)) {
-        ssize_t length = write(fd, data + sent, sizeof(pid) - sent);
+        ssize_t length = send(fd, data + sent, sizeof(pid) - sent,
+                              MSG_NOSIGNAL);
         if (length < 0) {
             if (errno == EINTR) {
                 continue;
@@ -204,7 +206,7 @@ static int report_startup_failure(int startup_fd) {
     char failed = TRUE;
     ssize_t written;
     do {
-        written = write(startup_fd, &failed, sizeof(failed));
+        written = send(startup_fd, &failed, sizeof(failed), MSG_NOSIGNAL);
     } while (written < 0 && errno == EINTR);
 
     return EXIT_FAILURE;
@@ -561,7 +563,8 @@ int main(int argc, char *argv[]) {
         char ready = TRUE;
         ssize_t written;
         do {
-            written = write(startup_channel[0], &ready, sizeof(ready));
+            written = send(startup_channel[0], &ready, sizeof(ready),
+                           MSG_NOSIGNAL);
         } while (written < 0 && errno == EINTR);
         if (written != sizeof(ready)) {
             perror("startup channel");
