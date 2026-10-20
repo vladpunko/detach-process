@@ -12,12 +12,13 @@ Detaching a long-running command usually means juggling `nohup`, backgrounding, 
 
 ## Installation
 
-Requirements: a Unix-like OS with [git](https://git-scm.com/downloads), a C compiler such as [gcc](https://gcc.gnu.org/install), and `install` (from [coreutils](https://www.gnu.org/software/coreutils/)). For the one-line installer you also need [curl](https://curl.se/download.html) and `sudo`.
+Requirements: a Unix-like OS with [git](https://git-scm.com/downloads), a C compiler such as [gcc](https://gcc.gnu.org/install), and `install` (from [coreutils](https://www.gnu.org/software/coreutils/)). For the installer you also need [curl](https://curl.se/download.html) and `sudo`.
 
 To install this package as a standalone application with the command-line interface you are to run the following command:
 
 ```bash
-sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh)"
+install_script=$(curl -fsSL https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh) &&
+  sudo sh -c "${install_script}"
 ```
 
 The install script defaults to `/usr/local/bin` for the binary and `/usr/local/share/man` for the man page.
