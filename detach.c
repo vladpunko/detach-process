@@ -5,6 +5,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
@@ -21,6 +22,8 @@
 #define OPTION_SEPARATOR "--"
 #define OPTION_EQUALS_STR "="
 #define STRING_TERMINATOR '\0'
+
+#define DEV_NULL_PATH "/dev/null"
 
 static const struct option long_options[] = {
     {"help", no_argument, NULL, 'h'},
@@ -92,8 +95,28 @@ static int option_has_required_parameter(const char *option) {
     return FALSE;
 }
 
+static int open_missing_standard_descriptors(void) {
+    // Keep 0, 1, and 2 occupied so internal files cannot take their place.
+    for (int fd = STDIN_FILENO; fd <= STDERR_FILENO; fd += 1) {
+        if (fcntl(fd, F_GETFD) >= 0) {
+            continue;
+        }
+        if (errno != EBADF) {
+            perror("standard descriptors");
+
+            return FALSE;
+        }
+        if (open(DEV_NULL_PATH, O_RDWR) < 0) {
+            perror(DEV_NULL_PATH);
+
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 int main(int argc, char *argv[]) {
-    const char *stdin_path = "/dev/null";
+    const char *stdin_path = DEV_NULL_PATH;
     const char *stdout_path = NULL;
     const char *stderr_path = NULL;
     const char *pid_path = NULL;
@@ -223,6 +246,10 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    if (!open_missing_standard_descriptors()) {
+        return EXIT_FAILURE;
+    }
+
     // New stdout.
     char stdout_template[] = "/tmp/stdout.XXXXXX";
     int fd_stdout;
@@ -329,19 +356,31 @@ int main(int argc, char *argv[]) {
 
         return EXIT_FAILURE;
     }
-    dup2(fd_stdin, STDIN_FILENO);
+    if (dup2(fd_stdin, STDIN_FILENO) < 0) {
+        perror("stdin");
+
+        return EXIT_FAILURE;
+    }
     if (fd_stdin > STDIN_FILENO) {
         close(fd_stdin);
     }
 
     // Redirect stdout.
-    dup2(fd_stdout, STDOUT_FILENO);
+    if (dup2(fd_stdout, STDOUT_FILENO) < 0) {
+        perror("stdout");
+
+        return EXIT_FAILURE;
+    }
     if (fd_stdout > STDOUT_FILENO) {
         close(fd_stdout);
     }
 
     // Redirect stderr.
-    dup2(fd_stderr, STDERR_FILENO);
+    if (dup2(fd_stderr, STDERR_FILENO) < 0) {
+        perror("stderr");
+
+        return EXIT_FAILURE;
+    }
     if (fd_stderr > STDERR_FILENO) {
         close(fd_stderr);
     }
