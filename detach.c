@@ -198,6 +198,34 @@ static int report_startup_failure(int startup_fd) {
     return EXIT_FAILURE;
 }
 
+static void print_error_log(int fd) {
+    // Read the child's diagnostics before removing its temporary log.
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        perror("stderr");
+
+        return;
+    }
+
+    char buffer[BUFSIZ];
+    while (TRUE) {
+        ssize_t length = read(fd, buffer, sizeof(buffer));
+        if (length == 0) {
+            return;
+        }
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("stderr");
+
+            return;
+        }
+        if (fwrite(buffer, 1, (size_t)length, stderr) != (size_t)length) {
+            return;
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     const char *stdin_path = DEV_NULL_PATH;
     const char *stdout_path = NULL;
@@ -341,44 +369,49 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    char stdout_template[] = "/tmp/stdout.XXXXXX";
+    char stderr_template[] = "/tmp/stderr.XXXXXX";
+    int stdout_is_temporary = FALSE;
+    int stderr_is_temporary = FALSE;
+
     // Keep existing contents until the PID file has been checked.
     // New stdout.
-    char stdout_template[] = "/tmp/stdout.XXXXXX";
     int fd_stdout;
     if (stdout_path == NULL) {
         fd_stdout = mkstemp(stdout_template);
         if (fd_stdout < 0) {
             perror("stdout");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
         stdout_path = stdout_template;
+        stdout_is_temporary = TRUE;
     } else {
         fd_stdout = open(stdout_path, O_CREAT | O_WRONLY, 0600);
         if (fd_stdout < 0) {
             perror("stdout");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
     }
 
     // New stderr.
-    char stderr_template[] = "/tmp/stderr.XXXXXX";
     int fd_stderr;
     if (stderr_path == NULL) {
         fd_stderr = mkstemp(stderr_template);
         if (fd_stderr < 0) {
             perror("stderr");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
         stderr_path = stderr_template;
+        stderr_is_temporary = TRUE;
     } else {
         fd_stderr = open(stderr_path, O_CREAT | O_WRONLY, 0600);
         if (fd_stderr < 0) {
             perror("stderr");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
     }
 
@@ -386,14 +419,14 @@ int main(int argc, char *argv[]) {
     if (fstat(fd_stdout, &stdout_stat) < 0) {
         perror("stdout");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     struct stat stderr_stat;
     if (fstat(fd_stderr, &stderr_stat) < 0) {
         perror("stderr");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     int fd_pid = -1;
@@ -403,19 +436,19 @@ int main(int argc, char *argv[]) {
         if (fd_pid < 0) {
             perror("pid");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
         if (fstat(fd_pid, &pid_stat) < 0) {
             perror("pid");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
 
         struct stat stdin_stat;
         if (fstat(fd_stdin, &stdin_stat) < 0) {
             perror("stdin");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
 
         // Reject aliases before truncating or writing any of these files.
@@ -425,7 +458,7 @@ int main(int argc, char *argv[]) {
             fputs("PID file must differ from stdin, stdout, and stderr.\n",
                   stderr);
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
     }
 
@@ -434,12 +467,12 @@ int main(int argc, char *argv[]) {
     if (S_ISREG(stdout_stat.st_mode) && ftruncate(fd_stdout, 0) < 0) {
         perror("stdout");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
     if (S_ISREG(stderr_stat.st_mode) && ftruncate(fd_stderr, 0) < 0) {
         perror("stderr");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     // Share the file offset when both streams refer to the same file.
@@ -447,7 +480,7 @@ int main(int argc, char *argv[]) {
         if (dup2(fd_stdout, fd_stderr) < 0) {
             perror("stderr");
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
     }
 
@@ -457,14 +490,14 @@ int main(int argc, char *argv[]) {
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, startup_channel) < 0) {
         perror("startup channel");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     // Successful exec closes the child's endpoint and wakes the parent.
     if (fcntl(startup_channel[1], F_SETFD, FD_CLOEXEC) < 0) {
         perror("startup channel");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     // Create a new process.
@@ -478,18 +511,18 @@ int main(int argc, char *argv[]) {
             if (S_ISREG(pid_stat.st_mode) && ftruncate(fd_pid, 0) < 0) {
                 perror("pid");
 
-                return EXIT_FAILURE;
+                goto startup_failed;
             }
             if (dprintf(fd_pid, "%jd\n", (intmax_t)pid) < 0) {
                 perror("pid");
                 close(fd_pid);
 
-                return EXIT_FAILURE;
+                goto startup_failed;
             }
             if (close(fd_pid) < 0) {
                 perror("pid");
 
-                return EXIT_FAILURE;
+                goto startup_failed;
             }
 
             // Permit startup only after writing and closing the PID file.
@@ -502,7 +535,7 @@ int main(int argc, char *argv[]) {
             if (written != sizeof(ready)) {
                 perror("startup channel");
 
-                return EXIT_FAILURE;
+                goto startup_failed;
             }
         }
 
@@ -515,16 +548,27 @@ int main(int argc, char *argv[]) {
         if (received < 0) {
             perror("startup channel");
 
+            // The command may be running, so keep its logs and show the paths.
+            fprintf(stderr, "stdout: %s\nstderr: %s\n", stdout_path, stderr_path);
+
             return EXIT_FAILURE;
         }
         close(startup_channel[0]);
         if (received > 0) {
-            fprintf(stderr, "Failed to start the command. Check stderr: %s\n",
-                    stderr_path);
+            fputs("Failed to start the command.\n", stderr);
+            if (stderr_is_temporary) {
+                print_error_log(fd_stderr);
+            } else if (stdout_is_temporary &&
+                       is_same_file(&stdout_stat, &stderr_stat)) {
+                print_error_log(fd_stdout);
+            } else {
+                fprintf(stderr, "Check stderr: %s\n", stderr_path);
+            }
 
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
 
+        // The program is running, so report errors must not remove its logs.
         if (printf("PID: %jd\n"
                    "stdout: %s\n"
                    "stderr: %s\n",
@@ -548,7 +592,7 @@ int main(int argc, char *argv[]) {
     } else if (pid < 0) {
         perror("fork");
 
-        return EXIT_FAILURE;
+        goto startup_failed;
     }
 
     close(startup_channel[0]);
@@ -568,7 +612,7 @@ int main(int argc, char *argv[]) {
             return report_startup_failure(startup_channel[1]);
         }
         if (received != sizeof(ready) || ready != TRUE) {
-            return EXIT_FAILURE;
+            goto startup_failed;
         }
     }
 
@@ -619,4 +663,19 @@ int main(int argc, char *argv[]) {
     perror("exec");
 
     return report_startup_failure(startup_channel[1]);
+
+startup_failed:
+    // Remove only files created by mkstemp, never user-selected paths.
+    // ENOENT is harmless if the parent already removed them before exiting.
+    if (stdout_is_temporary) {
+        if (unlink(stdout_template) < 0 && errno != ENOENT) {
+            perror(stdout_template);
+        }
+    }
+    if (stderr_is_temporary) {
+        if (unlink(stderr_template) < 0 && errno != ENOENT) {
+            perror(stderr_template);
+        }
+    }
+    return EXIT_FAILURE;
 }
