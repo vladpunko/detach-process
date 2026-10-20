@@ -93,6 +93,20 @@ static int open_missing_standard_descriptors(void) {
     return TRUE;
 }
 
+static int redirect_standard_descriptor(int source_fd, int target_fd,
+                                        const char *label) {
+    if (dup2(source_fd, target_fd) < 0) {
+        perror(label);
+
+        return FALSE;
+    }
+    // After duplication, only the standard descriptor is needed.
+    if (source_fd != target_fd) {
+        close(source_fd);
+    }
+    return TRUE;
+}
+
 static int close_inherited_descriptors(int startup_fd) {
     // Enumerate open descriptors, including those above a lowered limit.
     DIR *directory = opendir(DEV_FD_PATH);
@@ -694,33 +708,18 @@ int main(int argc, char *argv[]) {
     }
 
     // Redirect stdin.
-    if (dup2(fd_stdin, STDIN_FILENO) < 0) {
-        perror("stdin");
-
+    if (!redirect_standard_descriptor(fd_stdin, STDIN_FILENO, "stdin")) {
         return report_startup_failure(child_startup_fd);
-    }
-    if (fd_stdin > STDIN_FILENO) {
-        close(fd_stdin);
     }
 
     // Redirect stdout.
-    if (dup2(fd_stdout, STDOUT_FILENO) < 0) {
-        perror("stdout");
-
+    if (!redirect_standard_descriptor(fd_stdout, STDOUT_FILENO, "stdout")) {
         return report_startup_failure(child_startup_fd);
-    }
-    if (fd_stdout > STDOUT_FILENO) {
-        close(fd_stdout);
     }
 
     // Redirect stderr.
-    if (dup2(fd_stderr, STDERR_FILENO) < 0) {
-        perror("stderr");
-
+    if (!redirect_standard_descriptor(fd_stderr, STDERR_FILENO, "stderr")) {
         return report_startup_failure(child_startup_fd);
-    }
-    if (fd_stderr > STDERR_FILENO) {
-        close(fd_stderr);
     }
 
     // Close inherited files, pipes, and sockets before starting the program.
