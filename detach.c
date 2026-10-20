@@ -525,9 +525,21 @@ int main(int argc, char *argv[]) {
             return EXIT_FAILURE;
         }
 
-        printf("PID: %jd\n", (intmax_t)pid);
-        printf("stdout: %s\n", stdout_path);
-        printf("stderr: %s\n", stderr_path);
+        if (printf("PID: %jd\n"
+                   "stdout: %s\n"
+                   "stderr: %s\n",
+                   (intmax_t)pid, stdout_path, stderr_path) < 0) {
+            perror("report");
+
+            return EXIT_FAILURE;
+        }
+
+        // Flush buffered report data and check the final close for errors.
+        if (fclose(stdout) == EOF) {
+            perror("report");
+
+            return EXIT_FAILURE;
+        }
 
         close(fd_stdout);
         close(fd_stderr);
