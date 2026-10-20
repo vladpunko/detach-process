@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 // Boolean macros for readability in this file.
@@ -46,7 +47,7 @@ static void print_usage(FILE *stream) {
         "  --stdin FILE   read the standard input from FILE\n"
         "  --stdout FILE  write the standard output to FILE\n"
         "  --stderr FILE  write the standard error to FILE\n"
-        "  --pid FILE     write the child process ID to FILE\n"
+        "  --pid FILE     write the program's process ID to FILE\n"
         "\n"
         "Notes:\n"
         "  Use %s to separate detach options from the program arguments.\n"
@@ -150,6 +151,50 @@ static int close_inherited_descriptors(int startup_fd) {
         perror(DEV_FD_PATH);
 
         return FALSE;
+    }
+    return TRUE;
+}
+
+static int send_process_id(int fd, pid_t pid) {
+    // A stream socket may transfer the PID in several writes.
+    const char *data = (const char *)&pid;
+    size_t sent = 0;
+    while (sent < sizeof(pid)) {
+        ssize_t length = write(fd, data + sent, sizeof(pid) - sent);
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("startup channel");
+
+            return FALSE;
+        }
+        if (length == 0) {
+            return FALSE;
+        }
+        sent += (size_t)length;
+    }
+    return TRUE;
+}
+
+static int receive_process_id(int fd, pid_t *pid) {
+    // Read the complete PID before interpreting the following status byte.
+    char *data = (char *)pid;
+    size_t received = 0;
+    while (received < sizeof(*pid)) {
+        ssize_t length = read(fd, data + received, sizeof(*pid) - received);
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("startup channel");
+
+            return FALSE;
+        }
+        if (length == 0) {
+            return FALSE;
+        }
+        received += (size_t)length;
     }
     return TRUE;
 }
@@ -447,8 +492,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // The parent grants startup permission after saving the PID.
-    // The child uses the same channel to report startup failures.
+    // The final child reports its PID and waits for permission to start.
+    // The same channel also carries setup and exec failures.
     int startup_channel[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, startup_channel) < 0) {
         perror("startup channel");
@@ -463,11 +508,33 @@ int main(int argc, char *argv[]) {
         goto startup_failed;
     }
 
-    // Create a new process.
-    pid_t pid = fork();
-    if (pid > 0) {
+    // Create the intermediate process that will become the session leader.
+    pid_t intermediate_pid = fork();
+    if (intermediate_pid > 0) {
         close(fd_stdin);
         close(startup_channel[1]);
+
+        pid_t pid;
+        int pid_received = receive_process_id(startup_channel[0], &pid);
+
+        // Reap the intermediate process before allowing the final child to run.
+        // ECHILD also covers callers that ignore SIGCHLD.
+        while (waitpid(intermediate_pid, NULL, 0) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == ECHILD) {
+                break;
+            }
+            perror("waitpid");
+
+            goto startup_failed;
+        }
+        if (!pid_received || pid <= 0) {
+            fputs("Failed to start the command.\n", stderr);
+
+            goto startup_failed;
+        }
 
         if (pid_path != NULL) {
             // Reuse the checked descriptor instead of reopening its path.
@@ -487,19 +554,19 @@ int main(int argc, char *argv[]) {
 
                 goto startup_failed;
             }
+        }
 
-            // Permit startup only after writing and closing the PID file.
-            // On failure, process exit closes the channel without permission.
-            char ready = TRUE;
-            ssize_t written;
-            do {
-                written = write(startup_channel[0], &ready, sizeof(ready));
-            } while (written < 0 && errno == EINTR);
-            if (written != sizeof(ready)) {
-                perror("startup channel");
+        // Allow startup after saving the PID file, if requested.
+        // On failure, process exit closes the channel without permission.
+        char ready = TRUE;
+        ssize_t written;
+        do {
+            written = write(startup_channel[0], &ready, sizeof(ready));
+        } while (written < 0 && errno == EINTR);
+        if (written != sizeof(ready)) {
+            perror("startup channel");
 
-                goto startup_failed;
-            }
+            goto startup_failed;
         }
 
         // Wait for exec to close the channel or for a failure byte.
@@ -552,7 +619,7 @@ int main(int argc, char *argv[]) {
         close(fd_stderr);
 
         return EXIT_SUCCESS;
-    } else if (pid < 0) {
+    } else if (intermediate_pid < 0) {
         perror("fork");
 
         goto startup_failed;
@@ -562,28 +629,47 @@ int main(int argc, char *argv[]) {
 
     if (pid_path != NULL) {
         close(fd_pid);
-
-        // EOF means the parent failed before granting startup permission.
-        char ready;
-        ssize_t received;
-        do {
-            received = read(startup_channel[1], &ready, sizeof(ready));
-        } while (received < 0 && errno == EINTR);
-        if (received < 0) {
-            perror("startup channel");
-
-            return report_startup_failure(startup_channel[1]);
-        }
-        if (received != sizeof(ready) || ready != TRUE) {
-            goto startup_failed;
-        }
     }
 
-    // Create a new session.
+    // Create a new session before the second fork.
     if (setsid() < 0) {
         perror("setsid");
+        send_process_id(startup_channel[1], 0);
+
+        return EXIT_FAILURE;
+    }
+
+    // The final child inherits the session without becoming its leader.
+    pid_t detached_pid = fork();
+    if (detached_pid < 0) {
+        perror("fork");
+        send_process_id(startup_channel[1], 0);
+
+        return EXIT_FAILURE;
+    }
+    if (detached_pid > 0) {
+        // Leave the command to the final child without flushing inherited stdio.
+        _exit(EXIT_SUCCESS);
+    }
+
+    // Only the final child writes its PID, before any startup status byte.
+    if (!send_process_id(startup_channel[1], getpid())) {
+        goto startup_failed;
+    }
+
+    // EOF means the parent failed before granting startup permission.
+    char ready;
+    ssize_t received;
+    do {
+        received = read(startup_channel[1], &ready, sizeof(ready));
+    } while (received < 0 && errno == EINTR);
+    if (received < 0) {
+        perror("startup channel");
 
         return report_startup_failure(startup_channel[1]);
+    }
+    if (received != sizeof(ready) || ready != TRUE) {
+        goto startup_failed;
     }
 
     // Redirect stdin.

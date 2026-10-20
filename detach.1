@@ -9,15 +9,17 @@ The
 .B detach
 utility launches a program in a separate session so it continues running
 independently of the interactive shell.
-It forks, starts a new session, redirects standard input to
+It forks, starts a new session, and forks again so the launched program is
+not a session leader.
+Standard input is redirected to
 .IR /dev/null ,
-and redirects standard output and standard error to temporary files in
+and standard output and standard error are redirected to temporary files in
 .IR /tmp .
 The
 .RB \-\-
 argument separates detach options from the command to run and is required
 when options are used.
-The parent process displays the child PID and the paths used for standard
+The parent process displays the program PID and the paths used for standard
 output and standard error, then terminates.
 .SH OPTIONS
 .TP
@@ -25,7 +27,7 @@ output and standard error, then terminates.
 Show this help message and exit.
 .TP
 .B \-\-pid FILE
-Write the child process ID to
+Write the launched program's process ID to
 .IR FILE .
 .TP
 .B \-\-stdin FILE
@@ -50,7 +52,7 @@ End of options. Required when options are used.
 On success, the parent process outputs:
 .TP
 .B PID:
-The process ID of the detached child process.
+The process ID of the launched program.
 .TP
 .B stdout:
 The file used to capture the child's standard output.
