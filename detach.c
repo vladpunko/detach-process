@@ -5,6 +5,7 @@
 
 #include <fcntl.h>
 #include <getopt.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -290,7 +291,7 @@ int main(int argc, char *argv[]) {
     // Create a new process.
     pid_t pid = fork();
     if (pid > 0) {
-        printf("PID: %d\n", pid);
+        printf("PID: %jd\n", (intmax_t)pid);
         printf("stdout: %s\n", stdout_path);
         printf("stderr: %s\n", stderr_path);
 
@@ -301,7 +302,7 @@ int main(int argc, char *argv[]) {
 
                 return EXIT_FAILURE;
             }
-            dprintf(fd_pid, "%d\n", pid);
+            dprintf(fd_pid, "%jd\n", (intmax_t)pid);
             close(fd_pid);
         }
 
