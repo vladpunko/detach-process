@@ -247,7 +247,7 @@ static void report_startup_failure(int startup_fd) {
 }
 
 static void print_error_log(int fd) {
-    // Read the child's diagnostics before removing its temporary log.
+    // Read diagnostics through the descriptor, even if the path was removed.
     if (lseek(fd, 0, SEEK_SET) < 0) {
         perror("stderr");
 
