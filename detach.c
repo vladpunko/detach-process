@@ -504,8 +504,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // The final child reports its PID and waits for permission to start.
-    // The same channel also carries setup and exec failures.
+    // The final child sends its PID and waits for startup permission.
+    // After permission, it reports failure or closes the channel through exec.
     int startup_channel[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, startup_channel) < 0) {
         perror("startup channel");
@@ -513,8 +513,11 @@ int main(int argc, char *argv[]) {
         goto startup_failed;
     }
 
+    const int parent_startup_fd = startup_channel[0];
+    const int child_startup_fd = startup_channel[1];
+
     // Successful exec closes the child's endpoint and wakes the parent.
-    if (fcntl(startup_channel[1], F_SETFD, FD_CLOEXEC) < 0) {
+    if (fcntl(child_startup_fd, F_SETFD, FD_CLOEXEC) < 0) {
         perror("startup channel");
 
         goto startup_failed;
@@ -524,10 +527,10 @@ int main(int argc, char *argv[]) {
     pid_t intermediate_pid = fork();
     if (intermediate_pid > 0) {
         close(fd_stdin);
-        close(startup_channel[1]);
+        close(child_startup_fd);
 
-        pid_t pid;
-        int pid_received = receive_process_id(startup_channel[0], &pid);
+        pid_t program_pid;
+        int pid_received = receive_process_id(parent_startup_fd, &program_pid);
 
         // Reap the intermediate process before allowing the final child to run.
         // ECHILD also covers callers that ignore SIGCHLD.
@@ -542,7 +545,7 @@ int main(int argc, char *argv[]) {
 
             goto startup_failed;
         }
-        if (!pid_received || pid <= 0) {
+        if (!pid_received || program_pid <= 0) {
             fputs("Failed to start the command.\n", stderr);
 
             goto startup_failed;
@@ -555,7 +558,7 @@ int main(int argc, char *argv[]) {
 
                 goto startup_failed;
             }
-            if (dprintf(fd_pid, "%jd\n", (intmax_t)pid) < 0) {
+            if (dprintf(fd_pid, "%jd\n", (intmax_t)program_pid) < 0) {
                 perror("pid");
                 close(fd_pid);
 
@@ -573,7 +576,7 @@ int main(int argc, char *argv[]) {
         char ready = TRUE;
         ssize_t written;
         do {
-            written = send(startup_channel[0], &ready, sizeof(ready),
+            written = send(parent_startup_fd, &ready, sizeof(ready),
                            MSG_NOSIGNAL);
         } while (written < 0 && errno == EINTR);
         if (written != sizeof(ready)) {
@@ -586,7 +589,7 @@ int main(int argc, char *argv[]) {
         char failed;
         ssize_t received;
         do {
-            received = read(startup_channel[0], &failed, sizeof(failed));
+            received = read(parent_startup_fd, &failed, sizeof(failed));
         } while (received < 0 && errno == EINTR);
         if (received < 0) {
             perror("startup channel");
@@ -596,7 +599,7 @@ int main(int argc, char *argv[]) {
 
             return EXIT_FAILURE;
         }
-        close(startup_channel[0]);
+        close(parent_startup_fd);
         if (received > 0) {
             fputs("Failed to start the command.\n", stderr);
             if (stderr_is_temporary) {
@@ -615,7 +618,7 @@ int main(int argc, char *argv[]) {
         if (printf("PID: %jd\n"
                    "stdout: %s\n"
                    "stderr: %s\n",
-                   (intmax_t)pid, stdout_path, stderr_path) < 0) {
+                   (intmax_t)program_pid, stdout_path, stderr_path) < 0) {
             perror("report");
 
             return EXIT_FAILURE;
@@ -638,7 +641,7 @@ int main(int argc, char *argv[]) {
         goto startup_failed;
     }
 
-    close(startup_channel[0]);
+    close(parent_startup_fd);
 
     if (pid_path != NULL) {
         close(fd_pid);
@@ -647,26 +650,26 @@ int main(int argc, char *argv[]) {
     // Create a new session before the second fork.
     if (setsid() < 0) {
         perror("setsid");
-        send_process_id(startup_channel[1], 0);
+        send_process_id(child_startup_fd, 0);
 
         return EXIT_FAILURE;
     }
 
     // The final child inherits the session without becoming its leader.
-    pid_t detached_pid = fork();
-    if (detached_pid < 0) {
+    pid_t program_pid = fork();
+    if (program_pid < 0) {
         perror("fork");
-        send_process_id(startup_channel[1], 0);
+        send_process_id(child_startup_fd, 0);
 
         return EXIT_FAILURE;
     }
-    if (detached_pid > 0) {
+    if (program_pid > 0) {
         // Leave the command to the final child without flushing inherited stdio.
         _exit(EXIT_SUCCESS);
     }
 
     // Only the final child writes its PID, before any startup status byte.
-    if (!send_process_id(startup_channel[1], getpid())) {
+    if (!send_process_id(child_startup_fd, getpid())) {
         goto startup_failed;
     }
 
@@ -674,12 +677,12 @@ int main(int argc, char *argv[]) {
     char ready;
     ssize_t received;
     do {
-        received = read(startup_channel[1], &ready, sizeof(ready));
+        received = read(child_startup_fd, &ready, sizeof(ready));
     } while (received < 0 && errno == EINTR);
     if (received < 0) {
         perror("startup channel");
 
-        return report_startup_failure(startup_channel[1]);
+        return report_startup_failure(child_startup_fd);
     }
     if (received != sizeof(ready) || ready != TRUE) {
         goto startup_failed;
@@ -689,7 +692,7 @@ int main(int argc, char *argv[]) {
     if (dup2(fd_stdin, STDIN_FILENO) < 0) {
         perror("stdin");
 
-        return report_startup_failure(startup_channel[1]);
+        return report_startup_failure(child_startup_fd);
     }
     if (fd_stdin > STDIN_FILENO) {
         close(fd_stdin);
@@ -699,7 +702,7 @@ int main(int argc, char *argv[]) {
     if (dup2(fd_stdout, STDOUT_FILENO) < 0) {
         perror("stdout");
 
-        return report_startup_failure(startup_channel[1]);
+        return report_startup_failure(child_startup_fd);
     }
     if (fd_stdout > STDOUT_FILENO) {
         close(fd_stdout);
@@ -709,22 +712,22 @@ int main(int argc, char *argv[]) {
     if (dup2(fd_stderr, STDERR_FILENO) < 0) {
         perror("stderr");
 
-        return report_startup_failure(startup_channel[1]);
+        return report_startup_failure(child_startup_fd);
     }
     if (fd_stderr > STDERR_FILENO) {
         close(fd_stderr);
     }
 
     // Close inherited files, pipes, and sockets before starting the program.
-    if (!close_inherited_descriptors(startup_channel[1])) {
-        return report_startup_failure(startup_channel[1]);
+    if (!close_inherited_descriptors(child_startup_fd)) {
+        return report_startup_failure(child_startup_fd);
     }
 
     // Start a program in a new session on the current operating system.
     execvp(argv[optind], &argv[optind]);
     perror("exec");
 
-    return report_startup_failure(startup_channel[1]);
+    return report_startup_failure(child_startup_fd);
 
 startup_failed:
     // Remove only files created by mkstemp, never user-selected paths.
