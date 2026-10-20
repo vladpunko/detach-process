@@ -67,6 +67,12 @@ static int argument_is_empty(const char *argument) {
     return FALSE;
 }
 
+static int is_same_file(const struct stat *first, const struct stat *second) {
+    // Device and inode identify a file even when its paths differ.
+    return first->st_dev == second->st_dev &&
+           first->st_ino == second->st_ino;
+}
+
 static int option_has_required_parameter(const char *option) {
     if (option == NULL) {
         return FALSE;
@@ -327,6 +333,15 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    // Open stdin now so the PID check uses the file the child will read.
+    int fd_stdin = open(stdin_path, O_RDONLY);
+    if (fd_stdin < 0) {
+        perror("stdin");
+
+        return EXIT_FAILURE;
+    }
+
+    // Keep existing contents until the PID file has been checked.
     // New stdout.
     char stdout_template[] = "/tmp/stdout.XXXXXX";
     int fd_stdout;
@@ -339,7 +354,7 @@ int main(int argc, char *argv[]) {
         }
         stdout_path = stdout_template;
     } else {
-        fd_stdout = open(stdout_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        fd_stdout = open(stdout_path, O_CREAT | O_WRONLY, 0600);
         if (fd_stdout < 0) {
             perror("stdout");
 
@@ -359,7 +374,7 @@ int main(int argc, char *argv[]) {
         }
         stderr_path = stderr_template;
     } else {
-        fd_stderr = open(stderr_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        fd_stderr = open(stderr_path, O_CREAT | O_WRONLY, 0600);
         if (fd_stderr < 0) {
             perror("stderr");
 
@@ -381,9 +396,54 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    int fd_pid = -1;
+    struct stat pid_stat;
+    if (pid_path != NULL) {
+        fd_pid = open(pid_path, O_CREAT | O_WRONLY, 0600);
+        if (fd_pid < 0) {
+            perror("pid");
+
+            return EXIT_FAILURE;
+        }
+        if (fstat(fd_pid, &pid_stat) < 0) {
+            perror("pid");
+
+            return EXIT_FAILURE;
+        }
+
+        struct stat stdin_stat;
+        if (fstat(fd_stdin, &stdin_stat) < 0) {
+            perror("stdin");
+
+            return EXIT_FAILURE;
+        }
+
+        // Reject aliases before truncating or writing any of these files.
+        if (is_same_file(&pid_stat, &stdin_stat) ||
+            is_same_file(&pid_stat, &stdout_stat) ||
+            is_same_file(&pid_stat, &stderr_stat)) {
+            fputs("PID file must differ from stdin, stdout, and stderr.\n",
+                  stderr);
+
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Truncate regular output files only after checking for PID conflicts.
+    // Devices and pipes do not need truncation.
+    if (S_ISREG(stdout_stat.st_mode) && ftruncate(fd_stdout, 0) < 0) {
+        perror("stdout");
+
+        return EXIT_FAILURE;
+    }
+    if (S_ISREG(stderr_stat.st_mode) && ftruncate(fd_stderr, 0) < 0) {
+        perror("stderr");
+
+        return EXIT_FAILURE;
+    }
+
     // Share the file offset when both streams refer to the same file.
-    if (stdout_stat.st_dev == stderr_stat.st_dev &&
-        stdout_stat.st_ino == stderr_stat.st_ino) {
+    if (is_same_file(&stdout_stat, &stderr_stat)) {
         if (dup2(fd_stdout, fd_stderr) < 0) {
             perror("stderr");
 
@@ -410,11 +470,12 @@ int main(int argc, char *argv[]) {
     // Create a new process.
     pid_t pid = fork();
     if (pid > 0) {
+        close(fd_stdin);
         close(startup_channel[1]);
 
         if (pid_path != NULL) {
-            int fd_pid = open(pid_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
-            if (fd_pid < 0) {
+            // Reuse the checked descriptor instead of reopening its path.
+            if (S_ISREG(pid_stat.st_mode) && ftruncate(fd_pid, 0) < 0) {
                 perror("pid");
 
                 return EXIT_FAILURE;
@@ -481,6 +542,8 @@ int main(int argc, char *argv[]) {
     close(startup_channel[0]);
 
     if (pid_path != NULL) {
+        close(fd_pid);
+
         // EOF means the parent failed before granting startup permission.
         char ready;
         ssize_t received;
@@ -504,13 +567,7 @@ int main(int argc, char *argv[]) {
         return report_startup_failure(startup_channel[1]);
     }
 
-    // New stdin.
-    int fd_stdin = open(stdin_path, O_RDONLY);
-    if (fd_stdin < 0) {
-        perror("stdin");
-
-        return report_startup_failure(startup_channel[1]);
-    }
+    // Redirect stdin.
     if (dup2(fd_stdin, STDIN_FILENO) < 0) {
         perror("stdin");
 
