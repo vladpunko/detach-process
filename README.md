@@ -35,6 +35,7 @@ cd ./detach-process/
 gcc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
 
 # Step -- 4.
+sudo mkdir -p /usr/local/bin /usr/local/share/man/man1
 sudo install -m 755 detach /usr/local/bin/detach
 sudo install -m 644 detach.1 /usr/local/share/man/man1/detach.1
 ```

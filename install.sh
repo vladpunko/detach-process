@@ -30,11 +30,9 @@ git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-proce
 gcc -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${workdir}/detach"
 
 # Step -- 3.
+umask 022
+mkdir -p /usr/local/bin /usr/local/share/man/man1
 install -m 755 "${workdir}/detach" /usr/local/bin/detach
 
 # Step -- 4.
-install -d -m 755 /usr/local/share/man/man1
-chmod 755 /usr/local/share \
-          /usr/local/share/man \
-          /usr/local/share/man/man1
 install -m 644 "${workdir}/detach.1" /usr/local/share/man/man1/detach.1
