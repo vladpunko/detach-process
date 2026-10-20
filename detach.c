@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -118,7 +119,7 @@ static int open_missing_standard_descriptors(void) {
     return TRUE;
 }
 
-static int close_inherited_descriptors(void) {
+static int close_inherited_descriptors(int startup_fd) {
     // Enumerate open descriptors, including those above a lowered limit.
     DIR *directory = opendir(DEV_FD_PATH);
     if (directory == NULL) {
@@ -157,6 +158,10 @@ static int close_inherited_descriptors(void) {
         if (fd == dirfd(directory)) {
             continue;
         }
+        // Preserve the startup channel until exec closes it automatically.
+        if (fd == startup_fd) {
+            continue;
+        }
         // This function runs only in the child. Closing its copies does
         // not close the corresponding descriptors in the parent process.
         if (close((int)fd) < 0) {
@@ -174,6 +179,17 @@ static int close_inherited_descriptors(void) {
         return FALSE;
     }
     return TRUE;
+}
+
+static int report_startup_failure(int startup_fd) {
+    // Notify the parent before exiting after a setup or exec failure.
+    char failed = TRUE;
+    ssize_t written;
+    do {
+        written = write(startup_fd, &failed, sizeof(failed));
+    } while (written < 0 && errno == EINTR);
+
+    return EXIT_FAILURE;
 }
 
 int main(int argc, char *argv[]) {
@@ -375,10 +391,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // With --pid, the child must wait until its PID has been saved.
-    int pid_ready_pipe[2];
-    if (pid_path != NULL && pipe(pid_ready_pipe) < 0) {
-        perror("pid synchronization");
+    // The parent grants startup permission after saving the PID.
+    // The child uses the same channel to report startup failures.
+    int startup_channel[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, startup_channel) < 0) {
+        perror("startup channel");
+
+        return EXIT_FAILURE;
+    }
+
+    // Successful exec closes the child's endpoint and wakes the parent.
+    if (fcntl(startup_channel[1], F_SETFD, FD_CLOEXEC) < 0) {
+        perror("startup channel");
 
         return EXIT_FAILURE;
     }
@@ -386,9 +410,9 @@ int main(int argc, char *argv[]) {
     // Create a new process.
     pid_t pid = fork();
     if (pid > 0) {
-        if (pid_path != NULL) {
-            close(pid_ready_pipe[0]);
+        close(startup_channel[1]);
 
+        if (pid_path != NULL) {
             int fd_pid = open(pid_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
             if (fd_pid < 0) {
                 perror("pid");
@@ -408,18 +432,36 @@ int main(int argc, char *argv[]) {
             }
 
             // Permit startup only after writing and closing the PID file.
-            // On failure, process exit closes the pipe without permission.
+            // On failure, process exit closes the channel without permission.
             char ready = TRUE;
             ssize_t written;
             do {
-                written = write(pid_ready_pipe[1], &ready, sizeof(ready));
+                written = write(startup_channel[0], &ready, sizeof(ready));
             } while (written < 0 && errno == EINTR);
             if (written != sizeof(ready)) {
-                perror("pid synchronization");
+                perror("startup channel");
 
                 return EXIT_FAILURE;
             }
-            close(pid_ready_pipe[1]);
+        }
+
+        // Wait for exec to close the channel or for a failure byte.
+        char failed;
+        ssize_t received;
+        do {
+            received = read(startup_channel[0], &failed, sizeof(failed));
+        } while (received < 0 && errno == EINTR);
+        if (received < 0) {
+            perror("startup channel");
+
+            return EXIT_FAILURE;
+        }
+        close(startup_channel[0]);
+        if (received > 0) {
+            fprintf(stderr, "Failed to start the command. Check stderr: %s\n",
+                    stderr_path);
+
+            return EXIT_FAILURE;
         }
 
         printf("PID: %jd\n", (intmax_t)pid);
@@ -436,21 +478,20 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    if (pid_path != NULL) {
-        close(pid_ready_pipe[1]);
+    close(startup_channel[0]);
 
+    if (pid_path != NULL) {
         // EOF means the parent failed before granting startup permission.
         char ready;
         ssize_t received;
         do {
-            received = read(pid_ready_pipe[0], &ready, sizeof(ready));
+            received = read(startup_channel[1], &ready, sizeof(ready));
         } while (received < 0 && errno == EINTR);
         if (received < 0) {
-            perror("pid synchronization");
+            perror("startup channel");
 
-            return EXIT_FAILURE;
+            return report_startup_failure(startup_channel[1]);
         }
-        close(pid_ready_pipe[0]);
         if (received != sizeof(ready) || ready != TRUE) {
             return EXIT_FAILURE;
         }
@@ -460,7 +501,7 @@ int main(int argc, char *argv[]) {
     if (setsid() < 0) {
         perror("setsid");
 
-        return EXIT_FAILURE;
+        return report_startup_failure(startup_channel[1]);
     }
 
     // New stdin.
@@ -468,12 +509,12 @@ int main(int argc, char *argv[]) {
     if (fd_stdin < 0) {
         perror("stdin");
 
-        return EXIT_FAILURE;
+        return report_startup_failure(startup_channel[1]);
     }
     if (dup2(fd_stdin, STDIN_FILENO) < 0) {
         perror("stdin");
 
-        return EXIT_FAILURE;
+        return report_startup_failure(startup_channel[1]);
     }
     if (fd_stdin > STDIN_FILENO) {
         close(fd_stdin);
@@ -483,7 +524,7 @@ int main(int argc, char *argv[]) {
     if (dup2(fd_stdout, STDOUT_FILENO) < 0) {
         perror("stdout");
 
-        return EXIT_FAILURE;
+        return report_startup_failure(startup_channel[1]);
     }
     if (fd_stdout > STDOUT_FILENO) {
         close(fd_stdout);
@@ -493,20 +534,20 @@ int main(int argc, char *argv[]) {
     if (dup2(fd_stderr, STDERR_FILENO) < 0) {
         perror("stderr");
 
-        return EXIT_FAILURE;
+        return report_startup_failure(startup_channel[1]);
     }
     if (fd_stderr > STDERR_FILENO) {
         close(fd_stderr);
     }
 
     // Close inherited files, pipes, and sockets before starting the program.
-    if (!close_inherited_descriptors()) {
-        return EXIT_FAILURE;
+    if (!close_inherited_descriptors(startup_channel[1])) {
+        return report_startup_failure(startup_channel[1]);
     }
 
     // Start a program in a new session on the current operating system.
     execvp(argv[optind], &argv[optind]);
     perror("exec");
 
-    return EXIT_FAILURE;
+    return report_startup_failure(startup_channel[1]);
 }
