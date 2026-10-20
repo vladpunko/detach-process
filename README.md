@@ -62,6 +62,11 @@ detach ping -c 10 google.com  # pgrep ping | xargs ps -p
 Use `--` to separate detach's options from the command you want to run. This is
 required when options are used.
 
+The exit status describes startup, not the command's eventual exit status.
+Setup and exec errors return a nonzero status when reported through the startup
+channel. An abrupt termination before exec may close that channel without an
+error report.
+
 You can write the PID and the standard output and error to specific files:
 
 ```bash

@@ -352,7 +352,7 @@ int main(int argc, char *argv[]) {
 
                 return EXIT_FAILURE;
             }
-            // Check buffered output and the final close before reporting success.
+            // Check buffered output and the final close for errors.
             if (fclose(stdout) == EOF) {
                 perror("help");
 
@@ -604,7 +604,8 @@ int main(int argc, char *argv[]) {
             goto startup_failed;
         }
 
-        // Wait for exec to close the channel or for a failure byte.
+        // EOF normally follows exec, but also occurs if the child dies.
+        // A failure byte explicitly reports a setup or exec error.
         char failed;
         ssize_t received;
         do {
@@ -614,7 +615,8 @@ int main(int argc, char *argv[]) {
             perror("startup channel");
 
             // The command may be running, so keep its logs and show the paths.
-            fprintf(stderr, "stdout: %s\nstderr: %s\n", stdout_path, stderr_path);
+            fprintf(stderr, "stdout: %s\nstderr: %s\n",
+                    stdout_path, stderr_path);
 
             return EXIT_FAILURE;
         }
@@ -633,7 +635,7 @@ int main(int argc, char *argv[]) {
             goto startup_failed;
         }
 
-        // The program is running, so report errors must not remove its logs.
+        // Keep the logs on report errors because the command may be running.
         if (printf("PID: %jd\n"
                    "stdout: %s\n"
                    "stderr: %s\n",
@@ -683,11 +685,11 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     if (program_pid > 0) {
-        // Leave the command to the final child without flushing inherited stdio.
+        // Exit without flushing the inherited stdio buffers.
         _exit(EXIT_SUCCESS);
     }
 
-    // Only the final child writes its PID, before any startup status byte.
+    // The final child sends its PID before any startup status byte.
     if (!send_process_id(child_startup_fd, getpid())) {
         goto startup_failed;
     }

@@ -67,10 +67,14 @@ is provided, the PID is also written to the specified file.
 .SH EXIT STATUS
 .TP
 .B 0
-Success.
+No startup error was reported.
 .TP
 .B > 0
 An error was encountered.
+.PP
+The exit status describes startup, not the program's eventual exit status.
+An abrupt termination before exec may close the startup channel without
+reporting an error.
 .SH EXAMPLES
 Start a ping command detached from the current session:
 .PP
@@ -81,7 +85,8 @@ detach -- ping -c 10 google.com
 Write the PID and the standard output and error to specific files:
 .PP
 .RS
-detach --pid /tmp/ping.pid --stdout /tmp/ping.out --stderr /tmp/ping.err -- ping -c 10 google.com
+detach --pid /tmp/ping.pid --stdout /tmp/ping.out --stderr /tmp/ping.err --
+ping -c 10 google.com
 .RE
 .SH FILES
 .TP
