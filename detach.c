@@ -19,7 +19,6 @@
 
 #define OPTION_SEPARATOR "--"
 #define OPTION_EQUALS_STR "="
-#define OPTION_EQUALS_CHAR '='
 #define STRING_TERMINATOR '\0'
 
 static const struct option long_options[] = {
@@ -92,18 +91,6 @@ static int option_has_required_parameter(const char *option) {
     return FALSE;
 }
 
-static int option_is_consuming_next_argument(const char *option) {
-    if (!option_has_required_parameter(option)) {
-        return FALSE;
-    }
-
-    if (strchr(option, OPTION_EQUALS_CHAR) != NULL) {
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
 int main(int argc, char *argv[]) {
     const char *stdin_path = "/dev/null";
     const char *stdout_path = NULL;
@@ -113,6 +100,7 @@ int main(int argc, char *argv[]) {
     int opt;
     int options_present = FALSE;
     int separator_present = FALSE;
+    int next_argument = optind;
 
     // Suppress getopt output so we print our own errors.
     opterr = FALSE;
@@ -209,29 +197,13 @@ int main(int argc, char *argv[]) {
         if (opt == 'i' || opt == 'o' || opt == 'e' || opt == 'p') {
             options_present = TRUE;
         }
+        next_argument = optind;
     }
 
-    const char *separator_marker = NULL;
-    if (optind > 1) {
-        separator_marker = argv[optind - 1];
-    }
-
-    const char *option_candidate = NULL;
-    if (optind > 2) {
-        option_candidate = argv[optind - 2];
-    }
-
-    if (options_present) {
-        separator_present = FALSE;
-        // Treat the separator as valid only when it is not an option argument.
-        if (separator_marker != NULL &&
-            strcmp(separator_marker, OPTION_SEPARATOR) == 0) {
-            if (!option_is_consuming_next_argument(option_candidate)) {
-                separator_present = TRUE;
-            }
+    if (optind > next_argument) {
+        if (strcmp(argv[next_argument], OPTION_SEPARATOR) == 0) {
+            separator_present = TRUE;
         }
-    } else {
-        separator_present = TRUE;
     }
 
     if (options_present && !separator_present) {
