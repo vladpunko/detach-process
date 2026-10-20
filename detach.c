@@ -38,7 +38,7 @@ static const struct option long_options[] = {
     {NULL, 0, NULL, 0},
 };
 
-static void print_usage(FILE *stream) {
+static int print_usage(FILE *stream) {
     const char *message =
         "Usage: detach [OPTIONS] -- program [ARGS...]\n"
         "\n"
@@ -52,7 +52,7 @@ static void print_usage(FILE *stream) {
         "Notes:\n"
         "  Use %s to separate detach options from the program arguments.\n"
         "  This is required when options are used.\n";
-    fprintf(stream, message, OPTION_SEPARATOR);
+    return fprintf(stream, message, OPTION_SEPARATOR) >= 0;
 }
 
 static int argument_is_empty(const char *argument) {
@@ -312,7 +312,17 @@ int main(int argc, char *argv[]) {
         }
 
         case 'h':
-            print_usage(stdout);
+            if (!print_usage(stdout)) {
+                perror("help");
+
+                return EXIT_FAILURE;
+            }
+            // Check buffered output and the final close before reporting success.
+            if (fclose(stdout) == EOF) {
+                perror("help");
+
+                return EXIT_FAILURE;
+            }
 
             return EXIT_SUCCESS;
 
