@@ -5,10 +5,12 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +26,7 @@
 #define STRING_TERMINATOR '\0'
 
 #define DEV_NULL_PATH "/dev/null"
+#define DEV_FD_PATH "/dev/fd"
 
 static const struct option long_options[] = {
     {"help", no_argument, NULL, 'h'},
@@ -111,6 +114,64 @@ static int open_missing_standard_descriptors(void) {
 
             return FALSE;
         }
+    }
+    return TRUE;
+}
+
+static int close_inherited_descriptors(void) {
+    // Enumerate open descriptors, including those above a lowered limit.
+    DIR *directory = opendir(DEV_FD_PATH);
+    if (directory == NULL) {
+        perror(DEV_FD_PATH);
+
+        return FALSE;
+    }
+
+    while (TRUE) {
+        // If readdir returns NULL, errno tells us whether reading failed.
+        // Clear it first so an earlier error cannot look like a read failure.
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) {
+                perror(DEV_FD_PATH);
+                closedir(directory);
+
+                return FALSE;
+            }
+            break;
+        }
+
+        // Descriptor entries have numeric names. Ignore "." and "..".
+        // Check the range before converting the number to an int.
+        // Preserve stdin, stdout, and stderr, which are already redirected.
+        char *end;
+        errno = 0;
+        intmax_t fd = strtoimax(entry->d_name, &end, 10);
+        if (errno != 0 || end == entry->d_name ||
+            *end != STRING_TERMINATOR || fd <= STDERR_FILENO || fd > INT_MAX) {
+            continue;
+        }
+
+        // Keep the directory itself open until enumeration is complete.
+        if (fd == dirfd(directory)) {
+            continue;
+        }
+        // This function runs only in the child. Closing its copies does
+        // not close the corresponding descriptors in the parent process.
+        if (close((int)fd) < 0) {
+            perror("close inherited descriptor");
+            closedir(directory);
+
+            return FALSE;
+        }
+    }
+
+    // Close the directory and its file descriptor after reading all entries.
+    if (closedir(directory) < 0) {
+        perror(DEV_FD_PATH);
+
+        return FALSE;
     }
     return TRUE;
 }
@@ -383,6 +444,11 @@ int main(int argc, char *argv[]) {
     }
     if (fd_stderr > STDERR_FILENO) {
         close(fd_stderr);
+    }
+
+    // Close inherited files, pipes, and sockets before starting the program.
+    if (!close_inherited_descriptors()) {
+        return EXIT_FAILURE;
     }
 
     // Start a program in a new session on the current operating system.
