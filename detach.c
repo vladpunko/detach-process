@@ -155,6 +155,27 @@ static int close_inherited_descriptors(int startup_fd) {
     return TRUE;
 }
 
+static int save_pid_file(int fd, pid_t pid, const struct stat *file_stat) {
+    // Reuse the checked descriptor instead of reopening its path.
+    if (S_ISREG(file_stat->st_mode) && ftruncate(fd, 0) < 0) {
+        perror("pid");
+
+        return FALSE;
+    }
+    if (dprintf(fd, "%jd\n", (intmax_t)pid) < 0) {
+        perror("pid");
+        close(fd);
+
+        return FALSE;
+    }
+    if (close(fd) < 0) {
+        perror("pid");
+
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static int send_process_id(int fd, pid_t pid) {
     // A stream socket may transfer the PID in several sends.
     // MSG_NOSIGNAL lets a closed channel return an error without SIGPIPE.
@@ -550,21 +571,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (pid_path != NULL) {
-            // Reuse the checked descriptor instead of reopening its path.
-            if (S_ISREG(pid_stat.st_mode) && ftruncate(fd_pid, 0) < 0) {
-                perror("pid");
-
-                goto startup_failed;
-            }
-            if (dprintf(fd_pid, "%jd\n", (intmax_t)program_pid) < 0) {
-                perror("pid");
-                close(fd_pid);
-
-                goto startup_failed;
-            }
-            if (close(fd_pid) < 0) {
-                perror("pid");
-
+            if (!save_pid_file(fd_pid, program_pid, &pid_stat)) {
                 goto startup_failed;
             }
         }
