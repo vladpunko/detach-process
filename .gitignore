@@ -1,1 +1,13 @@
-*
+# Build output.
+/build/
+/cmake-build-*/
+/detach
+/a.out
+*.o
+*.dSYM/
+
+# Local Python environment for lint tools.
+/.venv/
+
+# macOS metadata.
+.DS_Store
