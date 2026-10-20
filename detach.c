@@ -23,7 +23,6 @@
 #define FALSE 0
 
 #define OPTION_SEPARATOR "--"
-#define OPTION_EQUALS_STR "="
 #define STRING_TERMINATOR '\0'
 
 #define DEV_NULL_PATH "/dev/null"
@@ -71,38 +70,6 @@ static int is_same_file(const struct stat *first, const struct stat *second) {
     // Device and inode identify a file even when its paths differ.
     return first->st_dev == second->st_dev &&
            first->st_ino == second->st_ino;
-}
-
-static int option_has_required_parameter(const char *option) {
-    if (option == NULL) {
-        return FALSE;
-    }
-
-    size_t separator_length = strlen(OPTION_SEPARATOR);
-
-    if (strncmp(option, OPTION_SEPARATOR, separator_length) != 0) {
-        return FALSE;
-    }
-
-    const char *option_name = option + separator_length;
-    size_t option_name_length = strcspn(option_name, OPTION_EQUALS_STR);
-
-    int option_index = 0;
-    while (long_options[option_index].name != NULL) {
-        const char *name = long_options[option_index].name;
-
-        if (strlen(name) == option_name_length &&
-            strncmp(name, option_name, option_name_length) == 0) {
-            if (long_options[option_index].has_arg == required_argument) {
-                return TRUE;
-            }
-
-            return FALSE;
-        }
-        option_index += 1;
-    }
-
-    return FALSE;
 }
 
 static int open_missing_standard_descriptors(void) {
@@ -238,8 +205,9 @@ int main(int argc, char *argv[]) {
     int next_argument = optind;
 
     // Suppress getopt output so we print our own errors.
+    // The colon makes a missing value return ':' instead of '?'.
     opterr = FALSE;
-    while ((opt = getopt_long(argc, argv, "+", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'i': {
             stdin_path = optarg;
@@ -301,25 +269,20 @@ int main(int argc, char *argv[]) {
 
             return EXIT_SUCCESS;
 
-        case '?': {
-            const char *option_name = NULL;
-
-            if (optind > 0 && argv[optind - 1] != NULL) {
-                option_name = argv[optind - 1];
-            }
-
-            if (option_has_required_parameter(option_name)) {
-                fprintf(stderr, "Missing an argument for the option: %s\n",
-                        option_name);
-            } else if (option_name != NULL) {
-                fprintf(stderr, "Unknown option: %s\n", option_name);
-            } else {
-                fputs("Unknown option or missing argument.\n", stderr);
-            }
+        case ':':
+            fprintf(stderr, "Missing an argument for the option: %s\n",
+                    argv[next_argument]);
             print_usage(stderr);
 
             return EXIT_FAILURE;
-        }
+
+        case '?':
+            // Grouped short options may leave optind on the current argument.
+            // Use the index saved before getopt handled that argument.
+            fprintf(stderr, "Unknown option: %s\n", argv[next_argument]);
+            print_usage(stderr);
+
+            return EXIT_FAILURE;
 
         default:
             fputs("Unknown option.\n", stderr);
