@@ -274,6 +274,17 @@ static void print_error_log(int fd) {
     }
 }
 
+static void report_output_failure(pid_t pid, const char *stdout_path,
+                                  const char *stderr_path) {
+    perror("report");
+    // Keep the launch details available when stdout cannot carry the report.
+    fprintf(stderr, "The command may already be running.\n"
+                    "PID: %jd\n"
+                    "stdout: %s\n"
+                    "stderr: %s\n",
+                    (intmax_t)pid, stdout_path, stderr_path);
+}
+
 int main(int argc, char *argv[]) {
     const char *stdin_path = DEV_NULL_PATH;
     const char *stdout_path = NULL;
@@ -627,8 +638,8 @@ int main(int argc, char *argv[]) {
             perror("startup channel");
 
             // The command may be running, so keep its logs and show the paths.
-            fprintf(stderr, "stdout: %s\nstderr: %s\n",
-                    stdout_path, stderr_path);
+            fprintf(stderr, "PID: %jd\nstdout: %s\nstderr: %s\n",
+                    (intmax_t)program_pid, stdout_path, stderr_path);
 
             return EXIT_FAILURE;
         }
@@ -652,14 +663,14 @@ int main(int argc, char *argv[]) {
                    "stdout: %s\n"
                    "stderr: %s\n",
                    (intmax_t)program_pid, stdout_path, stderr_path) < 0) {
-            perror("report");
+            report_output_failure(program_pid, stdout_path, stderr_path);
 
             return EXIT_FAILURE;
         }
 
         // Flush buffered report data and check the final close for errors.
         if (fclose(stdout) == EOF) {
-            perror("report");
+            report_output_failure(program_pid, stdout_path, stderr_path);
 
             return EXIT_FAILURE;
         }
