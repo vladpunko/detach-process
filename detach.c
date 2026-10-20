@@ -375,23 +375,56 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // With --pid, the child must wait until its PID has been saved.
+    int pid_ready_pipe[2];
+    if (pid_path != NULL && pipe(pid_ready_pipe) < 0) {
+        perror("pid synchronization");
+
+        return EXIT_FAILURE;
+    }
+
     // Create a new process.
     pid_t pid = fork();
     if (pid > 0) {
-        printf("PID: %jd\n", (intmax_t)pid);
-        printf("stdout: %s\n", stdout_path);
-        printf("stderr: %s\n", stderr_path);
-
         if (pid_path != NULL) {
+            close(pid_ready_pipe[0]);
+
             int fd_pid = open(pid_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
             if (fd_pid < 0) {
                 perror("pid");
 
                 return EXIT_FAILURE;
             }
-            dprintf(fd_pid, "%jd\n", (intmax_t)pid);
-            close(fd_pid);
+            if (dprintf(fd_pid, "%jd\n", (intmax_t)pid) < 0) {
+                perror("pid");
+                close(fd_pid);
+
+                return EXIT_FAILURE;
+            }
+            if (close(fd_pid) < 0) {
+                perror("pid");
+
+                return EXIT_FAILURE;
+            }
+
+            // Permit startup only after writing and closing the PID file.
+            // On failure, process exit closes the pipe without permission.
+            char ready = TRUE;
+            ssize_t written;
+            do {
+                written = write(pid_ready_pipe[1], &ready, sizeof(ready));
+            } while (written < 0 && errno == EINTR);
+            if (written != sizeof(ready)) {
+                perror("pid synchronization");
+
+                return EXIT_FAILURE;
+            }
+            close(pid_ready_pipe[1]);
         }
+
+        printf("PID: %jd\n", (intmax_t)pid);
+        printf("stdout: %s\n", stdout_path);
+        printf("stderr: %s\n", stderr_path);
 
         close(fd_stdout);
         close(fd_stderr);
@@ -401,6 +434,26 @@ int main(int argc, char *argv[]) {
         perror("fork");
 
         return EXIT_FAILURE;
+    }
+
+    if (pid_path != NULL) {
+        close(pid_ready_pipe[1]);
+
+        // EOF means the parent failed before granting startup permission.
+        char ready;
+        ssize_t received;
+        do {
+            received = read(pid_ready_pipe[0], &ready, sizeof(ready));
+        } while (received < 0 && errno == EINTR);
+        if (received < 0) {
+            perror("pid synchronization");
+
+            return EXIT_FAILURE;
+        }
+        close(pid_ready_pipe[0]);
+        if (received != sizeof(ready) || ready != TRUE) {
+            return EXIT_FAILURE;
+        }
     }
 
     // Create a new session.
