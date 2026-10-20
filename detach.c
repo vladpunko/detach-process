@@ -11,6 +11,7 @@
 #include <getopt.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -408,6 +409,18 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    // Failed diagnostic writes must not interrupt temporary-file cleanup.
+    // Restore the caller's disposition before starting the program.
+    struct sigaction ignored_sigpipe = {0};
+    struct sigaction original_sigpipe;
+    ignored_sigpipe.sa_handler = SIG_IGN;
+    if (sigemptyset(&ignored_sigpipe.sa_mask) < 0 ||
+        sigaction(SIGPIPE, &ignored_sigpipe, &original_sigpipe) < 0) {
+        perror("SIGPIPE");
+
+        return EXIT_FAILURE;
+    }
+
     if (!open_missing_standard_descriptors()) {
         return EXIT_FAILURE;
     }
@@ -728,8 +741,22 @@ int main(int argc, char *argv[]) {
         goto child_startup_failed;
     }
 
+    // Preserve the signal behavior the program would have without detach.
+    if (sigaction(SIGPIPE, &original_sigpipe, NULL) < 0) {
+        perror("SIGPIPE");
+
+        goto child_startup_failed;
+    }
+
     // Start a program in a new session on the current operating system.
     execvp(argv[optind], &argv[optind]);
+
+    // If exec returns, protect diagnostics and cleanup from SIGPIPE again.
+    int exec_error = errno;
+    if (sigaction(SIGPIPE, &ignored_sigpipe, NULL) < 0) {
+        goto child_startup_failed;
+    }
+    errno = exec_error;
     perror("exec");
 
 child_startup_failed:
