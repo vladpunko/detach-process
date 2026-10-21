@@ -28,6 +28,12 @@ These checks include hard links and symbolic links and run before existing
 file contents are changed. Devices such as
 .I /dev/null
 may be shared by the input and output streams.
+.PP
+Executable scripts should include an interpreter line such as
+.B #!/bin/sh
+or be launched explicitly with their interpreter.
+Automatic shell execution without an interpreter line depends on the host
+system and is unavailable with musl.
 .SH OPTIONS
 .TP
 .B \-\-help

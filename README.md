@@ -63,6 +63,8 @@ Use `--` to separate detach's options from the command you want to run. This is 
 
 The exit status describes startup, not the command's eventual exit status. Setup and exec errors return a nonzero status when reported through the startup channel. An abrupt termination before exec may close that channel without an error report.
 
+Executable scripts should include an interpreter line such as `#!/bin/sh`, or be launched explicitly with their interpreter, for example `detach -- /bin/sh script.sh`. Automatic shell execution of scripts without an interpreter line depends on the host system and is unavailable with musl.
+
 You can write the PID and the standard output and error to specific files:
 
 ```bash

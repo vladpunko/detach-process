@@ -77,6 +77,28 @@ TEST_F(ProcessTest, MissingCommandInPathIsAnExecFailure) {
     EXPECT_NE(result.error.find("exec:"), std::string::npos);
 }
 
+TEST_F(ProcessTest, ExecutableScriptRunsItsInterpreter) {
+    // An explicit interpreter works across macOS, glibc and musl.
+    // Replace the shell with the probe so the reported PID remains verifiable.
+    WriteFile(Path("command"), "#!/bin/sh\nexec \"${@}\"\n");
+    CheckCall(chmod(Path("command").c_str(), 0700), "chmod script");
+    const auto result = Run({"--", Path("command"),
+                             PROBE_PATH, "state", SocketPath()});
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
+    PingProbe();
+}
+
+TEST_F(ProcessTest, MissingScriptInterpreterIsAStartupFailure) {
+    WriteFile(Path("command"), "#!" + Path("missing-interpreter") + "\n");
+    CheckCall(chmod(Path("command").c_str(), 0700), "chmod script");
+    const auto result = Run({"--", Path("command")});
+
+    EXPECT_EQ(result.exit_code, 1);
+    EXPECT_NE(result.error.find("exec:"), std::string::npos) << result.error;
+}
+
 TEST_F(ProcessTest, PreservesEnvironmentVariables) {
     LaunchOptions options;
     options.environment["DETACH_TEST_VALUE"] = "value with spaces\nand newline";
