@@ -51,14 +51,14 @@ if(ENABLE_COVERAGE)
 endif()
 
 add_executable(detach_tests
-    arguments_test.cpp
-    files_test.cpp
-    failures_test.cpp
-    process_test.cpp
-    support.cpp
+    arguments_test.cc
+    files_test.cc
+    failures_test.cc
+    process_test.cc
+    test_support.cc
 )
 set_target_properties(detach_tests PROPERTIES
-    CXX_STANDARD 17
+    CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
@@ -76,7 +76,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(detach_faults PRIVATE -Wall -Wextra -Werror -Wpedantic)
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(detach_tests PRIVATE -Wall -Wextra -Werror -Wpedantic)
+    target_compile_options(detach_tests PRIVATE
+        -Wall -Wextra -Werror -Wpedantic -fno-exceptions
+    )
 endif()
 
 include(GoogleTest)

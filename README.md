@@ -89,7 +89,7 @@ detach --help
 
 ### Tests
 
-The integration suite uses GoogleTest and runs the compiled utility on Linux and macOS. Building tests requires CMake 3.16 or newer and a C++17 compiler. CMake uses an installed GoogleTest package when available, otherwise it downloads version 1.17.0 and verifies the archive checksum.
+The integration suite uses GoogleTest and runs the compiled utility on Linux and macOS. Building tests requires CMake 3.16 or newer and a C++20 compiler. CMake uses an installed GoogleTest package when available, otherwise it downloads version 1.17.0 and verifies the archive checksum.
 
 ```bash
 cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
@@ -99,10 +99,10 @@ ctest --test-dir build --output-on-failure --parallel 2
 
 Tests are grouped by behavior:
 
-- `tests/arguments_test.cpp`: options, separators, errors, and argument forwarding.
-- `tests/files_test.cpp`: redirections, PID files, permissions, and file aliases.
-- `tests/process_test.cpp`: sessions, terminals, signals, inherited descriptors, environment, and startup status.
-- `tests/failures_test.cpp`: system-call failures, interrupted I/O, partial transfers, diagnostic errors, and cleanup.
+- `tests/arguments_test.cc`: options, separators, errors, and argument forwarding.
+- `tests/files_test.cc`: redirections, PID files, permissions, and file aliases.
+- `tests/process_test.cc`: sessions, terminals, signals, inherited descriptors, environment, and startup status.
+- `tests/failures_test.cc`: system-call failures, interrupted I/O, partial transfers, diagnostic errors, and cleanup.
 
 `tests/probe.c` reports the detached command's state over a local socket and stays alive until the test releases it. This lets tests verify that `detach` returns while the command is still running. Terminal tests use a real pseudoterminal and check that closing it leaves the detached command responsive. Each test has its own temporary directory, bounded waits, and cleanup for reported temporary logs.
 
@@ -134,17 +134,20 @@ On macOS, prefix the `llvm-profdata` and `llvm-cov` commands with `xcrun`.
 
 Pull requests are welcome. Please open an issue first to discuss what should be changed.
 
+Code follows the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html). Use clang-format 23.1.3 with the repository configuration. C++ test helpers report errors through GoogleTest assertions and compile with exceptions disabled. The utility and C helpers retain C naming conventions.
+
 Please make sure this system package works without errors.
 
 ```bash
 # Step -- 1.
-python3 -m venv .venv && source ./.venv/bin/activate && pip install cpplint pre-commit
+python3 -m venv .venv && source ./.venv/bin/activate && pip install cpplint pre-commit clang-format==23.1.3
 
 # Step -- 2.
 pre-commit install --config .githooks.yml
 
 # Step -- 3.
-cpplint detach.c tests/*.c tests/*.cpp tests/*.h
+clang-format --dry-run --Werror detach.c tests/*.c tests/*.cc tests/*.h
+cpplint detach.c tests/*.c tests/*.cc tests/*.h
 ```
 
 ## License
