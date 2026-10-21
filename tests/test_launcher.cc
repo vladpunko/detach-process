@@ -50,6 +50,8 @@ void PrepareTerminal(const std::string& path) {
   if (path.empty()) {
     return;
   }
+  // Only a session leader can acquire this controlling terminal. The later
+  // detach invocation must then prove it can leave that real caller session.
   RequireChildCall(setsid(), "test setsid");
   int terminal = open(path.c_str(), O_RDWR);
   RequireChildCall(terminal, "open test terminal");
@@ -75,6 +77,8 @@ void ConfigureSignals(const LaunchOptions& options) {
     RequireChildCall(sigaction(signal, &action, nullptr), "ignore signal");
   }
 
+  // Disposition and masking are separate signal properties. Start with an
+  // empty mask, then block only the signals selected by this test.
   sigset_t mask;
   RequireChildCall(sigemptyset(&mask), "test blocked signals");
   for (int signal : options.blocked_signals) {
@@ -88,6 +92,8 @@ void BreakPipes(const std::vector<int>& descriptors) {
   for (int fd : descriptors) {
     int channel[2];
     RequireChildCall(pipe(channel), "create broken pipe");
+    // With no reader left, writes to the replacement stream exercise the
+    // utility's handling of EPIPE and SIGPIPE without affecting GoogleTest.
     close(channel[0]);
     RequireChildCall(dup2(channel[1], fd), "redirect broken pipe");
     close(channel[1]);
@@ -109,6 +115,8 @@ void PrepareChild(const LaunchOptions& options, int report_fd, int error_fd) {
   if (options.file_creation_mask >= 0) {
     umask(static_cast<mode_t>(options.file_creation_mask));
   }
+  // Preserve the hard limit and inherited handles. Lowering only the soft
+  // limit lets tests check handles that are open above that new limit.
   if (options.descriptor_limit != 0) {
     struct rlimit limit;
     RequireChildCall(getrlimit(RLIMIT_NOFILE, &limit), "get descriptor limit");
@@ -136,6 +144,8 @@ testing::AssertionResult WaitForLauncher(LaunchResult& result) {
       return CheckCall(-1, "waitpid test launcher");
     }
     if (Clock::now() >= deadline) {
+      // This is our direct child. Kill and reap it before returning so a hung
+      // utility cannot outlive the test or remain as a zombie.
       result.timed_out = true;
       kill(result.launcher_pid, SIGKILL);
       while (waitpid(result.launcher_pid, &result.status, 0) < 0 &&
@@ -175,6 +185,8 @@ void ParseReport(const std::string& text, LaunchResult& result) {
 LaunchResult RunDetach(const std::vector<std::string>& arguments,
                        const std::string& directory,
                        const LaunchOptions& options) {
+  // Explicit selection is used by fault tests. The environment override lets
+  // the same integration cases run against the instrumented coverage binary.
   std::string executable = options.executable;
   if (executable.empty()) {
     const char* selected = getenv("DETACH_TEST_EXECUTABLE");
@@ -213,6 +225,8 @@ LaunchResult RunDetach(const std::vector<std::string>& arguments,
   if (result.launcher_pid < 0) {
     return result;
   }
+  // Apply special caller state only in this forked child. The GoogleTest
+  // process keeps its own terminal, signal handlers, limits and standard I/O.
   if (result.launcher_pid == 0) {
     PrepareChild(options, report.get(), errors.get());
     if (chdir(directory.c_str()) < 0) {

@@ -24,6 +24,8 @@ namespace detach_test {
 Descriptor::~Descriptor() { Reset(); }
 
 void Descriptor::Reset(int fd) {
+  // Reset may receive the descriptor already owned by this object. Closing
+  // it in that case would leave an apparently valid owner of a closed handle.
   if (fd_ != fd) {
     if (fd_ >= 0) {
       close(fd_);
@@ -40,6 +42,8 @@ testing::AssertionResult CheckCall(int result, const char* operation) {
 }
 
 std::string ReadFile(const std::string& path) {
+  // Preserve embedded NUL bytes and newlines exactly. Redirection tests compare
+  // raw contents rather than treating command output as formatted text.
   std::ifstream stream(path, std::ios::binary);
   if (!stream) {
     ADD_FAILURE() << "Cannot open " << path << ": " << strerror(errno);
@@ -47,6 +51,7 @@ std::string ReadFile(const std::string& path) {
   }
   std::string contents;
   char buffer[4096];
+  // A final short read sets EOF but still leaves gcount bytes to append.
   while (stream.read(buffer, sizeof(buffer)) || stream.gcount() > 0) {
     contents.append(buffer, static_cast<size_t>(stream.gcount()));
   }
@@ -66,6 +71,8 @@ std::string ReadAvailable(int fd) {
     if (length > 0) {
       contents.append(buffer, static_cast<size_t>(length));
     } else if (length == 0 || errno == EAGAIN || errno == EWOULDBLOCK) {
+      // After readiness, EAGAIN means all available output was read. Waiting
+      // for EOF would hang while the test still owns a pipe writer.
       return contents;
     } else if (errno != EINTR) {
       ADD_FAILURE() << "read pipe: " << strerror(errno);
@@ -78,6 +85,8 @@ void WriteFile(const std::string& path, const std::string& contents) {
   std::ofstream stream(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(stream) << "Cannot open " << path;
   stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  // Closing flushes buffered writes. Check afterward so delayed write errors
+  // cannot leave incomplete setup data and produce a misleading test failure.
   stream.close();
   ASSERT_TRUE(stream) << "Cannot write " << path;
 }
@@ -85,6 +94,8 @@ void WriteFile(const std::string& path, const std::string& contents) {
 bool FileExists(const std::string& path) {
   std::error_code error;
   const bool exists = std::filesystem::exists(path, error);
+  // A permission or filesystem error must fail the test, rather than being
+  // mistaken for the expected absence of a file.
   EXPECT_FALSE(error) << path << ": " << error.message();
   return exists;
 }

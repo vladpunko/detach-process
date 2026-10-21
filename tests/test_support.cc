@@ -23,11 +23,15 @@
 namespace detach_test {
 
 void DetachTest::SetUp() {
+  // Parallel tests get separate files and socket paths, so one test cannot
+  // consume another test's report or overwrite its output.
   char directory[] = "/tmp/detach-test.XXXXXX";
   char* created = mkdtemp(directory);
   ASSERT_NE(created, nullptr) << strerror(errno);
 
   directory_ = created;
+  // Start listening before detach runs. The detached helper can connect as
+  // soon as it finishes its scenario, even before Run returns to the test.
   probe_.Listen(SocketPath());
 }
 
@@ -35,6 +39,8 @@ void DetachTest::TearDown() {
   // Finish the probe before removing files it may still be using.
   probe_.Close();
 
+  // Default logs live outside the private directory. Remove them explicitly
+  // before deleting the directory that holds the remaining test files.
   for (const auto& path : temporary_logs_) {
     EXPECT_EQ(unlink(path.c_str()), 0) << path << ": " << strerror(errno);
   }
@@ -53,6 +59,8 @@ std::string DetachTest::SocketPath() const { return Path("probe.socket"); }
 
 std::vector<std::string> DetachTest::ProbeCommand(
     const std::string& mode, const std::vector<std::string>& arguments) const {
+  // The helper receives its scenario and control socket before scenario data.
+  // Its stdout and stderr remain free for redirection assertions.
   std::vector<std::string> command = {PROBE_PATH, mode, SocketPath()};
   command.insert(command.end(), arguments.begin(), arguments.end());
   return command;
@@ -82,6 +90,8 @@ LaunchResult DetachTest::RunProbeMode(const std::string& mode,
                                       const std::vector<std::string>& options,
                                       const std::vector<std::string>& arguments,
                                       const LaunchOptions& launch_options) {
+  // Keep detach's options before the separator. Everything after it belongs
+  // to the command, including argument strings that look like detach options.
   auto command = options;
   command.push_back("--");
 
@@ -89,6 +99,8 @@ LaunchResult DetachTest::RunProbeMode(const std::string& mode,
   command.insert(command.end(), probe_command.begin(), probe_command.end());
 
   auto result = Run(command, launch_options);
+  // Register the command immediately. TearDown must still release it when a
+  // fatal assertion prevents the test from reaching ReadProbe.
   probe_.ExpectProcess(result.program_pid);
   return result;
 }

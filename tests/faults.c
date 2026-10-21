@@ -57,6 +57,8 @@ static void initialize_faults(void) {
   if (plan == NULL) {
     return;
   }
+  // Tokenization modifies its buffer. Keep the inherited environment string
+  // intact so every forked role sees the original plan when inspecting it.
   char* copy = strdup(plan);
   if (copy == NULL) {
     exit(125);
@@ -86,6 +88,8 @@ static const struct fault_rule* find_fault(const char* operation) {
     struct fault_rule* rule = &rules[index];
     if (strcmp(rule->role, roles[current_role]) == 0 &&
         strcmp(rule->operation, operation) == 0) {
+      // Count only calls in the selected role. Unrelated operations and calls
+      // made in another process cannot consume this rule's occurrence number.
       rule->calls += 1;
       if (rule->calls == rule->occurrence) {
         matched = rule;
@@ -119,7 +123,9 @@ static pid_t fault_fork(void) {
       rules[index].calls = 0;
     }
 #ifdef DETACH_TEST_COVERAGE
-    // Forked processes need separate profiles, including before exec.
+    // Expand the profile filename again so its PID placeholder identifies this
+    // child instead of keeping the filename chosen before fork.
+    // Separate files preserve coverage from children that later exec or _exit.
     const char* path = getenv("LLVM_PROFILE_FILE");
     if (path != NULL) {
       __llvm_profile_set_filename(path);
@@ -190,6 +196,8 @@ static void record_temporary(const char* path) {
   if (events == NULL) {
     return;
   }
+  // Event logging is test bookkeeping. Preserve the errno that the real
+  // mkstemp call left behind so bookkeeping cannot change utility behavior.
   int saved_error = errno;
   int fd = open(events, O_CREAT | O_WRONLY | O_APPEND, 0600);
   if (fd < 0 || dprintf(fd, "%s\n", path) < 0) {

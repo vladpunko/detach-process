@@ -33,6 +33,8 @@ constexpr auto kTimeout = std::chrono::seconds(5);
 
 testing::AssertionResult WaitReadable(int fd, Clock::time_point deadline) {
   while (Clock::now() < deadline) {
+    // Recalculate after every interruption so signals cannot restart the full
+    // timeout. Round a submillisecond remainder up to avoid a busy poll loop.
     const auto remaining = deadline - Clock::now();
     const auto timeout = std::chrono::duration_cast<Milliseconds>(remaining);
     struct pollfd event = {fd, POLLIN, 0};
@@ -77,6 +79,8 @@ testing::AssertionResult ReadExactly(int fd, Clock::time_point deadline,
       return testing::AssertionFailure()
              << "Probe closed before sending the expected data";
     }
+    // A stream socket preserves byte order, but one read need not contain the
+    // entire record. Continue exactly where this partial transfer stopped.
     next += length;
     size -= static_cast<size_t>(length);
   }
@@ -91,6 +95,8 @@ void ProbeClient::Listen(const std::string& path) {
   // The test's listener is not an inherited command descriptor. Hiding it at
   // exec keeps descriptor-leak checks focused on the utility's own behavior.
   ASSERT_TRUE(CheckCall(fcntl(listener_.get(), F_SETFD, FD_CLOEXEC), "fcntl"));
+  // Zero initialization also terminates sun_path after the copied name.
+  // Check its fixed capacity before copying into the Unix socket address.
   struct sockaddr_un address = {};
   address.sun_family = AF_UNIX;
   ASSERT_LT(path.size(), sizeof(address.sun_path));
@@ -113,6 +119,8 @@ testing::AssertionResult ProbeClient::ReceiveState(ProbeState& state) {
   do {
     accepted = accept(listener_.get(), nullptr, nullptr);
   } while (accepted < 0 && errno == EINTR);
+  // Own the accepted endpoint immediately so a later read failure still
+  // closes it during cleanup and releases the helper waiting at the other end.
   peer_.Reset(accepted);
   if (accepted < 0) {
     return CheckCall(-1, "accept probe");
@@ -135,6 +143,8 @@ ProbeState ProbeClient::ReadState() {
 }
 
 void ProbeClient::Ping() {
+  // A successful send alone only proves that the socket accepted a byte.
+  // Require its echo to prove that the detached helper is still executing.
   const char ping = 'p';
   ssize_t sent;
   do {
@@ -149,6 +159,8 @@ void ProbeClient::Ping() {
 void ProbeClient::Close() {
   const auto stopped = Stop();
   EXPECT_TRUE(stopped);
+  // Graceful shutdown has a deadline. If the helper cannot complete it, use
+  // the remembered command PID to keep a failing test from leaking a process.
   if (!stopped && pid_ > 0) {
     kill(pid_, SIGKILL);
   }
@@ -174,6 +186,8 @@ testing::AssertionResult ProbeClient::Stop() {
   // EOF releases the probe even when an assertion stopped the test.
   // Drain until EOF to confirm it finished using the per-test files.
   // waitpid cannot reap this process because detach reparented it.
+  // Close only our writing side first. The reading side stays open so we can
+  // observe the helper finishing its loop and closing its own socket.
   shutdown(peer_.get(), SHUT_WR);
   const auto deadline = Clock::now() + kTimeout;
   char buffer[256];

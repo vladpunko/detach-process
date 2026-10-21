@@ -187,6 +187,8 @@ static int capture_state(int channel, int argc, char* argv[],
   mode_t creation_mask = umask(0);
   umask(creation_mask);
 
+  // Read the PID file before reporting readiness. This verifies the launcher
+  // finished writing it before allowing the command to start.
   intmax_t pid_file = -1;
   if (strcmp(argv[1], "pid-file") == 0 && argc == 4) {
     FILE* file = fopen(argv[3], "r");
@@ -208,6 +210,8 @@ static int capture_state(int channel, int argc, char* argv[],
         fd > INT_MAX) {
       return 0;
     }
+    // Test the inherited descriptor number itself. The directory scan below
+    // also catches leaked handles whose numbers the test did not predict.
     fd_open = fcntl((int)fd, F_GETFD) >= 0;
   }
 

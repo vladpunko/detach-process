@@ -466,7 +466,8 @@ int main(int argc, char* argv[]) {
   int failure_report_fd = -1;
 
   // Preserve existing contents until all stream and PID aliases are checked.
-  // New stdout.
+  // Open the selected stdout without O_TRUNC. Alias checks below must be able
+  // to reject conflicting files before any existing contents are destroyed.
   int fd_stdout;
   if (stdout_path == NULL) {
     fd_stdout = mkstemp(stdout_template);
@@ -486,7 +487,8 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // New stderr.
+  // Prepare stderr under the same preservation rule. Remember which logs we
+  // created ourselves so failure cleanup never deletes a user-selected path.
   int fd_stderr;
   if (stderr_path == NULL) {
     fd_stderr = mkstemp(stderr_template);
@@ -604,6 +606,10 @@ int main(int argc, char* argv[]) {
   // Create the intermediate process that will become the session leader.
   pid_t intermediate_pid = fork();
   if (intermediate_pid > 0) {
+    // This branch is the original launcher. It reports startup to the terminal
+    // while the child branch below creates the detached command.
+    // Close our copy of the child's socket endpoint so its closure can reach
+    // this parent's read as EOF after exec.
     close(fd_stdin);
     close(child_startup_fd);
 
@@ -706,6 +712,8 @@ int main(int argc, char* argv[]) {
     goto startup_failed;
   }
 
+  // Only forked children reach this point. Keeping a copy of the parent's
+  // endpoint would hide its exit and leave the command waiting for permission.
   close(parent_startup_fd);
 
   if (pid_path != NULL) {
@@ -721,6 +729,7 @@ int main(int argc, char* argv[]) {
   }
 
   // The final child inherits the session without becoming its leader.
+  // This also prevents a later ordinary open from acquiring a controlling tty.
   pid_t program_pid = fork();
   if (program_pid < 0) {
     perror("fork");
@@ -753,6 +762,8 @@ int main(int argc, char* argv[]) {
     goto startup_failed;
   }
 
+  // Replace the terminal's standard streams before exec. The startup socket
+  // remains open while these steps run so any failure can reach the parent.
   // Redirect stdin.
   if (!redirect_standard_descriptor(fd_stdin, STDIN_FILENO, "stdin")) {
     goto child_startup_failed;
@@ -792,6 +803,10 @@ int main(int argc, char* argv[]) {
   perror("exec");
 
 child_startup_failed:
+  // The final child has already sent its PID. Arrange for the common cleanup
+  // below to send a failure byte after all diagnostics have been written.
+  // The launcher and intermediate child also use startup_failed, but do not
+  // send this final-child status byte.
   // Finish cleanup before the parent starts reading the diagnostic log.
   failure_report_fd = child_startup_fd;
 
