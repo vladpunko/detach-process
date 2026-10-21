@@ -368,6 +368,53 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(AliasKind::kSamePath, AliasKind::kHardLink,
                         AliasKind::kSymbolicLink)), PidAliasName);
 
+class InputAliasTest : public DetachTest,
+                      public testing::WithParamInterface<
+                          std::tuple<const char *, AliasKind, bool>> {
+};
+
+TEST_P(InputAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
+    const auto &[option, kind, write_pid] = GetParam();
+    WriteFile(Path("input"), "keep stdin\n");
+    WriteFile(Path("output"), "keep stdout\n");
+    WriteFile(Path("errors"), "keep stderr\n");
+    WriteFile(Path("pid"), "keep pid\n");
+    const auto alias = CreateAlias(kind, Path("input"), Path("alias"));
+    const std::string stream = option;
+    const auto output = stream == "--stdout" ? alias : Path("output");
+    const auto errors = stream == "--stderr" ? alias : Path("errors");
+    std::vector<std::string> options = {
+        "--stdin", Path("input"), "--stdout", output, "--stderr", errors};
+    if (write_pid) {
+        options.insert(options.end(), {"--pid", Path("pid")});
+    }
+
+    const auto result = RunProbe(options);
+
+    ASSERT_EQ(result.exit_code, 1) << result.error;
+    EXPECT_EQ(result.program_pid, -1);
+    EXPECT_NE(result.error.find("stdin must differ"), std::string::npos);
+    EXPECT_EQ(ReadFile(Path("input")), "keep stdin\n");
+    EXPECT_EQ(ReadFile(Path("output")), "keep stdout\n");
+    EXPECT_EQ(ReadFile(Path("errors")), "keep stderr\n");
+    EXPECT_EQ(ReadFile(Path("pid")), "keep pid\n");
+}
+
+std::string InputAliasName(
+        const testing::TestParamInfo<InputAliasTest::ParamType> &info) {
+    const auto &[option, kind, write_pid] = info.param;
+    return std::string(option + 2) + "_" + AliasName(kind) +
+           (write_pid ? "_WithPid" : "_WithoutPid");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    InputAliases, InputAliasTest,
+    testing::Combine(
+        testing::Values("--stdout", "--stderr"),
+        testing::Values(AliasKind::kSamePath, AliasKind::kHardLink,
+                        AliasKind::kSymbolicLink),
+        testing::Bool()), InputAliasName);
+
 class InvalidOutputTest : public DetachTest,
                           public testing::WithParamInterface<const char *> {
 };

@@ -75,6 +75,8 @@ Use the standard input from a file:
 detach --stdin README.md --stdout cat.out -- cat
 ```
 
+Regular input files must differ from stdout and stderr files. The PID file must differ from all three streams. These checks include hard links and symbolic links and run before existing file contents are changed. Devices such as `/dev/null` may be shared by the input and output streams.
+
 Show usage:
 
 ```bash

@@ -268,6 +268,18 @@ const FaultCase kDiagnosticFailures[] = {
 INSTANTIATE_TEST_SUITE_P(Diagnostics, DiagnosticFailureTest,
                          testing::ValuesIn(kDiagnosticFailures), FaultName);
 
+TEST_F(FaultTest, InputAliasFailurePreservesInputAndRemovesTemporaryLogs) {
+    WriteFile(Path("input"), "keep stdin\n");
+    const auto result = RunProbe({"--stdin", Path("input"),
+                                  "--stdout", Path("input")},
+                                 "state", {}, FaultOptions());
+
+    EXPECT_EQ(result.exit_code, 1);
+    EXPECT_EQ(result.program_pid, -1);
+    EXPECT_EQ(ReadFile(Path("input")), "keep stdin\n");
+    ExpectTemporaryFilesRemoved();
+}
+
 TEST_F(FaultTest, FailureToReopenDevNullIsReported) {
     auto options = Inject({"open", Role::kLauncher, 1, EACCES});
     options.closed_standard_descriptors = 1 << STDIN_FILENO;

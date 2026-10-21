@@ -455,7 +455,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Open stdin now so the PID check uses the file the child will read.
+    // Open stdin now so alias checks use the file the child will read.
     int fd_stdin = open(stdin_path, O_RDONLY);
     if (fd_stdin < 0) {
         perror("stdin");
@@ -469,7 +469,7 @@ int main(int argc, char *argv[]) {
     int stderr_is_temporary = FALSE;
     int failure_report_fd = -1;
 
-    // Keep existing contents until the PID file has been checked.
+    // Preserve existing contents until all stream and PID aliases are checked.
     // New stdout.
     int fd_stdout;
     if (stdout_path == NULL) {
@@ -538,15 +538,18 @@ int main(int argc, char *argv[]) {
 
             goto startup_failed;
         }
+    }
 
-        struct stat stdin_stat;
-        if (fstat(fd_stdin, &stdin_stat) < 0) {
-            perror("stdin");
+    struct stat stdin_stat;
+    if (fstat(fd_stdin, &stdin_stat) < 0) {
+        perror("stdin");
 
-            goto startup_failed;
-        }
+        goto startup_failed;
+    }
 
-        // Reject aliases before truncating or writing any of these files.
+    // Compare open files so hard links and symlinks cannot bypass the checks.
+    // No file has been truncated yet, including the optional PID file.
+    if (pid_path != NULL) {
         if (is_same_file(&pid_stat, &stdin_stat) ||
             is_same_file(&pid_stat, &stdout_stat) ||
             is_same_file(&pid_stat, &stderr_stat)) {
@@ -555,6 +558,16 @@ int main(int argc, char *argv[]) {
 
             goto startup_failed;
         }
+    }
+    // Writing to the input file would destroy unread data before exec.
+    // Devices such as /dev/null may still serve more than one stream.
+    if (S_ISREG(stdin_stat.st_mode) &&
+        (is_same_file(&stdin_stat, &stdout_stat) ||
+         is_same_file(&stdin_stat, &stderr_stat))) {
+        fputs("stdin must differ from stdout and stderr for regular files.\n",
+              stderr);
+
+        goto startup_failed;
     }
 
     // Reset outputs only after all file identities have been checked.

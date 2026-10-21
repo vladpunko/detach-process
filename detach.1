@@ -21,6 +21,13 @@ argument separates detach options from the command to run and is required
 when options are used.
 The parent process displays the program PID and the paths used for standard
 output and standard error, then terminates.
+.PP
+A regular input file must differ from the files selected for standard output
+and standard error. The PID file must differ from all three streams.
+These checks include hard links and symbolic links and run before existing
+file contents are changed. Devices such as
+.I /dev/null
+may be shared by the input and output streams.
 .SH OPTIONS
 .TP
 .B \-\-help
