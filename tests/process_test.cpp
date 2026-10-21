@@ -149,7 +149,7 @@ TEST_F(ProcessTest, KeepsTheCallersDefaultSigpipeDisposition) {
 
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
     LaunchOptions options;
-    options.ignore_sigpipe = true;
+    options.ignored_signals = {SIGPIPE};
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -158,7 +158,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
 
 TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
     LaunchOptions options;
-    options.block_sigpipe = true;
+    options.blocked_signals = {SIGPIPE};
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -167,7 +167,7 @@ TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
 
 TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
     LaunchOptions options;
-    options.block_sigusr1 = true;
+    options.blocked_signals = {SIGUSR1};
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -176,7 +176,7 @@ TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
 
 TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
     LaunchOptions options;
-    options.ignore_sigchld = true;
+    options.ignored_signals = {SIGCHLD};
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -185,7 +185,7 @@ TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
 
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
     LaunchOptions options;
-    options.ignore_sighup = true;
+    options.ignored_signals = {SIGHUP};
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -194,7 +194,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
 
 TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
     LaunchOptions options;
-    options.broken_stdout = true;
+    options.broken_pipes = {STDOUT_FILENO};
     const auto result = RunProbe({}, "streams", {}, options);
 
     ASSERT_EQ(result.exit_code, 1);
@@ -209,7 +209,7 @@ TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
 
 TEST_F(ProcessTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
     LaunchOptions options;
-    options.broken_stderr = true;
+    options.broken_pipes = {STDERR_FILENO};
     const auto result = Run({"--", Path("missing-command")}, options);
 
     EXPECT_EQ(result.exit_code, 1);
@@ -218,7 +218,7 @@ TEST_F(ProcessTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
 
 TEST_F(ProcessTest, HelpReportsFailureWhenItsOutputCannotBeWritten) {
     LaunchOptions options;
-    options.broken_stdout = true;
+    options.broken_pipes = {STDOUT_FILENO};
     const auto result = Run({"--help"}, options);
 
     EXPECT_NE(result.exit_code, 0);

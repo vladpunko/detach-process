@@ -23,7 +23,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -44,7 +43,16 @@ void WaitReadable(int fd, Clock::time_point deadline) {
         struct pollfd event = {fd, POLLIN, 0};
         int result = poll(&event, 1, std::max(1, static_cast<int>(remaining)));
         if (result > 0) {
-            return;
+            if (event.revents & POLLNVAL) {
+                throw std::runtime_error("Probe descriptor is invalid");
+            }
+            // Read on hangup too so callers can distinguish EOF from data.
+            if (event.revents & (POLLIN | POLLHUP)) {
+                return;
+            }
+            if (event.revents & POLLERR) {
+                throw std::runtime_error("Probe socket reported an I/O error");
+            }
         }
         if (result < 0 && errno != EINTR) {
             CheckCall(result, "poll");
@@ -53,72 +61,104 @@ void WaitReadable(int fd, Clock::time_point deadline) {
     throw std::runtime_error("Timed out waiting for the probe");
 }
 
+void ReadExactly(int fd, void *buffer, size_t remaining,
+                 Clock::time_point deadline) {
+    // A stream socket may split a record across multiple reads.
+    auto *next = static_cast<char *>(buffer);
+    while (remaining > 0) {
+        WaitReadable(fd, deadline);
+        ssize_t length = read(fd, next, remaining);
+        if (length < 0 && errno == EINTR) {
+            continue;
+        }
+        CheckCall(static_cast<int>(length), "read probe");
+        if (length == 0) {
+            throw std::runtime_error(
+                "Probe closed before sending the expected data");
+        }
+        next += length;
+        remaining -= static_cast<size_t>(length);
+    }
+}
+
+// Child setup must exit immediately on failure, without unwinding GoogleTest.
+void RequireChildCall(int result, const char *operation) {
+    if (result < 0) {
+        perror(operation);
+        _exit(125);
+    }
+}
+
+void PrepareTerminal(const std::string &path) {
+    if (path.empty()) {
+        return;
+    }
+    RequireChildCall(setsid(), "test setsid");
+    int terminal = open(path.c_str(), O_RDWR);
+    RequireChildCall(terminal, "open test terminal");
+    RequireChildCall(ioctl(terminal, TIOCSCTTY, 0), "acquire test terminal");
+    RequireChildCall(dup2(terminal, STDIN_FILENO), "redirect test terminal");
+    close(terminal);
+    // Fail setup if this caller did not actually obtain a terminal.
+    int controlling_terminal = open("/dev/tty", O_RDWR | O_NOCTTY);
+    RequireChildCall(controlling_terminal, "open controlling terminal");
+    close(controlling_terminal);
+}
+
+void ConfigureSignals(const LaunchOptions &options) {
+    struct sigaction action = {};
+    RequireChildCall(sigemptyset(&action.sa_mask), "test signal mask");
+    // Clear dispositions inherited from the test runner before each scenario.
+    action.sa_handler = SIG_DFL;
+    for (int signal : {SIGPIPE, SIGCHLD, SIGHUP, SIGALRM}) {
+        RequireChildCall(sigaction(signal, &action, nullptr), "reset signal");
+    }
+    action.sa_handler = SIG_IGN;
+    for (int signal : options.ignored_signals) {
+        RequireChildCall(sigaction(signal, &action, nullptr), "ignore signal");
+    }
+
+    sigset_t mask;
+    RequireChildCall(sigemptyset(&mask), "test blocked signals");
+    for (int signal : options.blocked_signals) {
+        RequireChildCall(sigaddset(&mask, signal), "add blocked signal");
+    }
+    RequireChildCall(sigprocmask(SIG_SETMASK, &mask, nullptr),
+                     "set blocked signals");
+}
+
+void BreakPipes(const std::vector<int> &descriptors) {
+    for (int fd : descriptors) {
+        int channel[2];
+        RequireChildCall(pipe(channel), "create broken pipe");
+        close(channel[0]);
+        RequireChildCall(dup2(channel[1], fd), "redirect broken pipe");
+        close(channel[1]);
+    }
+}
+
 // All special caller state is installed in the launcher, never in GoogleTest.
 void PrepareChild(const LaunchOptions &options, int report_fd, int error_fd) {
-    auto require = [](int result) {
-        if (result < 0) {
-            perror("test launcher");
-            _exit(125);
-        }
-    };
-    require(dup2(report_fd, STDOUT_FILENO));
-    require(dup2(error_fd, STDERR_FILENO));
-
-    if (!options.terminal.empty()) {
-        require(setsid());
-        int terminal = open(options.terminal.c_str(), O_RDWR);
-        require(terminal);
-        require(ioctl(terminal, TIOCSCTTY, 0));
-        require(dup2(terminal, STDIN_FILENO));
-        close(terminal);
-        // Fail setup if this caller did not actually obtain a terminal.
-        int controlling_terminal = open("/dev/tty", O_RDWR | O_NOCTTY);
-        require(controlling_terminal);
-        close(controlling_terminal);
-    }
-
-    for (int signal : {SIGPIPE, SIGCHLD, SIGHUP, SIGALRM}) {
-        bool ignored = (signal == SIGPIPE && options.ignore_sigpipe) ||
-                       (signal == SIGCHLD && options.ignore_sigchld) ||
-                       (signal == SIGHUP && options.ignore_sighup);
-        struct sigaction action = {};
-        action.sa_handler = ignored ? SIG_IGN : SIG_DFL;
-        require(sigemptyset(&action.sa_mask));
-        require(sigaction(signal, &action, nullptr));
-    }
-    sigset_t mask;
-    require(sigemptyset(&mask));
-    if (options.block_sigpipe) {
-        require(sigaddset(&mask, SIGPIPE));
-    }
-    if (options.block_sigusr1) {
-        require(sigaddset(&mask, SIGUSR1));
-    }
-    require(sigprocmask(SIG_SETMASK, &mask, nullptr));
-
-    for (int fd : {STDOUT_FILENO, STDERR_FILENO}) {
-        bool broken = (fd == STDOUT_FILENO && options.broken_stdout) ||
-                      (fd == STDERR_FILENO && options.broken_stderr);
-        if (broken) {
-            int channel[2];
-            require(pipe(channel));
-            close(channel[0]);
-            require(dup2(channel[1], fd));
-            close(channel[1]);
-        }
-    }
+    RequireChildCall(dup2(report_fd, STDOUT_FILENO), "capture launcher report");
+    RequireChildCall(dup2(error_fd, STDERR_FILENO), "capture launcher errors");
+    PrepareTerminal(options.terminal);
+    ConfigureSignals(options);
+    BreakPipes(options.broken_pipes);
 
     for (const auto &variable : options.environment) {
-        require(setenv(variable.first.c_str(), variable.second.c_str(), 1));
+        RequireChildCall(setenv(variable.first.c_str(),
+                                variable.second.c_str(), 1), "set environment");
     }
     if (options.file_creation_mask >= 0) {
         umask(static_cast<mode_t>(options.file_creation_mask));
     }
     if (options.descriptor_limit != 0) {
         struct rlimit limit;
-        require(getrlimit(RLIMIT_NOFILE, &limit));
+        RequireChildCall(getrlimit(RLIMIT_NOFILE, &limit),
+                         "get descriptor limit");
         limit.rlim_cur = options.descriptor_limit;
-        require(setrlimit(RLIMIT_NOFILE, &limit));
+        RequireChildCall(setrlimit(RLIMIT_NOFILE, &limit),
+                         "set descriptor limit");
     }
     // Close these last so setup cannot accidentally refill 0, 1, or 2.
     for (int fd = STDIN_FILENO; fd <= STDERR_FILENO; ++fd) {
@@ -144,15 +184,18 @@ void ParseReport(const std::string &text, LaunchResult *result) {
 
 }  // namespace
 
+// Resource helpers keep ownership and I/O failures out of individual tests.
 Descriptor::~Descriptor() {
     Reset();
 }
 
 void Descriptor::Reset(int fd) {
-    if (fd_ >= 0) {
-        close(fd_);
+    if (fd_ != fd) {
+        if (fd_ >= 0) {
+            close(fd_);
+        }
+        fd_ = fd;
     }
-    fd_ = fd;
 }
 
 int CheckCall(int result, const char *operation) {
@@ -165,10 +208,32 @@ int CheckCall(int result, const char *operation) {
 std::string ReadFile(const std::string &path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) {
+        throw std::runtime_error("Cannot open " + path);
+    }
+    std::string contents;
+    char buffer[4096];
+    while (stream.read(buffer, sizeof(buffer)) || stream.gcount() > 0) {
+        contents.append(buffer, static_cast<size_t>(stream.gcount()));
+    }
+    if (!stream.eof()) {
         throw std::runtime_error("Cannot read " + path);
     }
-    return {std::istreambuf_iterator<char>(stream),
-            std::istreambuf_iterator<char>()};
+    return contents;
+}
+
+std::string ReadAvailable(int fd) {
+    std::string contents;
+    char buffer[4096];
+    while (true) {
+        ssize_t length = read(fd, buffer, sizeof(buffer));
+        if (length > 0) {
+            contents.append(buffer, static_cast<size_t>(length));
+        } else if (length == 0 || errno == EAGAIN || errno == EWOULDBLOCK) {
+            return contents;
+        } else if (errno != EINTR) {
+            CheckCall(-1, "read pipe");
+        }
+    }
 }
 
 void WriteFile(const std::string &path, const std::string &contents) {
@@ -187,6 +252,7 @@ mode_t FileMode(const std::string &path) {
     return status.st_mode & 0777;
 }
 
+// The fixture owns the socket, probe lifetime and all per-test files.
 void DetachTest::SetUp() {
     char directory[] = "/tmp/detach-test.XXXXXX";
     char *created = mkdtemp(directory);
@@ -275,10 +341,11 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
     Descriptor errors(CheckCall(open(error_path.c_str(),
         O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600), "open diagnostics"));
 
-    std::vector<char *> argv = {
-        const_cast<char *>(executable.c_str())};
-    for (const auto &argument : arguments) {
-        argv.push_back(const_cast<char *>(argument.c_str()));
+    std::vector<std::string> command = {executable};
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    std::vector<char *> argv;
+    for (auto &argument : command) {
+        argv.push_back(argument.data());
     }
     argv.push_back(nullptr);
 
@@ -351,23 +418,8 @@ ProbeState DetachTest::ReadProbe() {
     WaitReadable(listener_.Get(), deadline);
     peer_.Reset(CheckCall(accept(listener_.Get(), nullptr, nullptr), "accept"));
 
-    // A stream socket may split a record across multiple reads.
     ProbeState state = {};
-    auto *next = reinterpret_cast<char *>(&state);
-    size_t remaining = sizeof(state);
-    while (remaining > 0) {
-        WaitReadable(peer_.Get(), deadline);
-        ssize_t length = read(peer_.Get(), next, remaining);
-        if (length < 0 && errno == EINTR) {
-            continue;
-        }
-        CheckCall(static_cast<int>(length), "read probe state");
-        if (length == 0) {
-            throw std::runtime_error("Probe exited before reporting its state");
-        }
-        next += length;
-        remaining -= static_cast<size_t>(length);
-    }
+    ReadExactly(peer_.Get(), &state, sizeof(state), deadline);
     probe_pid_ = static_cast<pid_t>(state.pid);
     probe_expected_ = true;
     return state;
@@ -375,10 +427,13 @@ ProbeState DetachTest::ReadProbe() {
 
 void DetachTest::PingProbe() {
     const char ping = 'p';
-    ASSERT_EQ(send(peer_.Get(), &ping, 1, MSG_NOSIGNAL), 1) << strerror(errno);
-    WaitReadable(peer_.Get(), Clock::now() + kTimeout);
+    ssize_t sent;
+    do {
+        sent = send(peer_.Get(), &ping, 1, MSG_NOSIGNAL);
+    } while (sent < 0 && errno == EINTR);
+    ASSERT_EQ(sent, 1) << strerror(errno);
     char reply = 0;
-    ASSERT_EQ(read(peer_.Get(), &reply, 1), 1);
+    ReadExactly(peer_.Get(), &reply, 1, Clock::now() + kTimeout);
     EXPECT_EQ(reply, ping);
 }
 

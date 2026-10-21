@@ -40,13 +40,9 @@ struct LaunchOptions {
     rlim_t descriptor_limit = 0;
     int closed_standard_descriptors = 0;
     int file_creation_mask = -1;
-    bool broken_stdout = false;
-    bool broken_stderr = false;
-    bool ignore_sigpipe = false;
-    bool ignore_sigchld = false;
-    bool ignore_sighup = false;
-    bool block_sigpipe = false;
-    bool block_sigusr1 = false;
+    std::vector<int> broken_pipes;
+    std::vector<int> ignored_signals;
+    std::vector<int> blocked_signals;
 };
 
 struct LaunchResult {
@@ -63,6 +59,8 @@ struct LaunchResult {
 
 int CheckCall(int result, const char *operation);
 std::string ReadFile(const std::string &path);
+// Read a nonblocking pipe after the probe confirms its writes are complete.
+std::string ReadAvailable(int fd);
 void WriteFile(const std::string &path, const std::string &contents);
 mode_t FileMode(const std::string &path);
 

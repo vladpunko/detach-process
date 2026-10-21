@@ -44,7 +44,8 @@ TEST_F(FilesTest, DefaultInputIsDevNull) {
 }
 
 TEST_F(FilesTest, RedirectsAllThreeStreams) {
-    const std::string contents("input\nwith\0binary data\n", 23);
+    constexpr char input[] = "input\nwith\0binary data\n";
+    const std::string contents(input, sizeof(input) - 1);
     WriteFile(Path("input"), contents);
     const auto result = RunProbe({"--stdin", Path("input"),
                                   "--stdout", Path("output"),
@@ -145,11 +146,7 @@ TEST_F(FilesTest, OutputCanBeAPipe) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     ReadProbe();
-    char buffer[128];
-    ssize_t length = read(reader.Get(), buffer, sizeof(buffer));
-    ASSERT_GT(length, 0);
-    EXPECT_EQ(std::string(buffer, static_cast<size_t>(length)),
-              "stdout one\nstdout two\n");
+    EXPECT_EQ(ReadAvailable(reader.Get()), "stdout one\nstdout two\n");
 }
 
 TEST_F(FilesTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
@@ -163,10 +160,7 @@ TEST_F(FilesTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    char buffer[64];
-    ssize_t length = read(reader.Get(), buffer, sizeof(buffer));
-    ASSERT_GT(length, 0);
-    EXPECT_EQ(std::string(buffer, static_cast<size_t>(length)),
+    EXPECT_EQ(ReadAvailable(reader.Get()),
               std::to_string(state.pid) + "\n");
     EXPECT_EQ(state.extra_descriptors, 0);
 }
@@ -263,13 +257,17 @@ std::string AliasName(AliasKind kind) {
     return "Unknown";
 }
 
-void CreateAlias(AliasKind kind, const std::string &target,
-                 const std::string &alias) {
+std::string CreateAlias(AliasKind kind, const std::string &target,
+                        const std::string &alias) {
+    if (kind == AliasKind::kSamePath) {
+        return target;
+    }
     if (kind == AliasKind::kHardLink) {
         CheckCall(link(target.c_str(), alias.c_str()), "link");
     } else if (kind == AliasKind::kSymbolicLink) {
         CheckCall(symlink(target.c_str(), alias.c_str()), "symlink");
     }
+    return alias;
 }
 
 class SharedOutputTest : public DetachTest,
@@ -278,9 +276,8 @@ class SharedOutputTest : public DetachTest,
 
 TEST_P(SharedOutputTest, BothStreamsShareAnOffsetWhenTheyReferToTheSameFile) {
     WriteFile(Path("combined"), std::string(1000, 'x'));
-    const std::string errors = GetParam() == AliasKind::kSamePath ?
-                              Path("combined") : Path("alias");
-    CreateAlias(GetParam(), Path("combined"), errors);
+    const auto errors = CreateAlias(GetParam(), Path("combined"),
+                                    Path("alias"));
     const auto result = RunProbe({"--stdout", Path("combined"),
                                   "--stderr", errors}, "streams");
 
@@ -310,8 +307,7 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
     WriteFile(Path("errors"), "keep stderr\n");
     const auto kind = std::get<1>(GetParam());
     const std::string target = Path(std::get<0>(GetParam()));
-    const std::string pid = kind == AliasKind::kSamePath ? target : Path("pid");
-    CreateAlias(kind, target, pid);
+    const auto pid = CreateAlias(kind, target, Path("pid"));
     const auto result = RunProbe({"--stdin", Path("input"),
                                   "--stdout", Path("output"),
                                   "--stderr", Path("errors"), "--pid", pid});
