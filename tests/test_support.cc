@@ -74,9 +74,14 @@ LaunchResult DetachTest::Run(const std::vector<std::string>& arguments,
 }
 
 LaunchResult DetachTest::RunProbe(const std::vector<std::string>& options,
-                                  const std::string& mode,
-                                  const std::vector<std::string>& arguments,
                                   const LaunchOptions& launch_options) {
+  return RunProbeMode("state", options, {}, launch_options);
+}
+
+LaunchResult DetachTest::RunProbeMode(const std::string& mode,
+                                      const std::vector<std::string>& options,
+                                      const std::vector<std::string>& arguments,
+                                      const LaunchOptions& launch_options) {
   auto command = options;
   command.push_back("--");
 

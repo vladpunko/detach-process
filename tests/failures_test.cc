@@ -140,8 +140,7 @@ class StartupFailureTest : public FaultTest,
 
 TEST_P(StartupFailureTest, ReportsTheFailureAndRemovesTemporaryLogs) {
   const auto& fault = GetParam();
-  const auto result =
-      RunProbe({"--pid", Path("pid")}, "state", {}, Inject(fault.rule));
+  const auto result = RunProbe({"--pid", Path("pid")}, Inject(fault.rule));
 
   ASSERT_EQ(result.exit_code, 1) << result.error;
   EXPECT_NE(result.error.find(fault.diagnostic), std::string::npos)
@@ -217,7 +216,7 @@ class StartupRetryTest : public FaultTest,
 };
 
 TEST_P(StartupRetryTest, RetriesWithoutChangingTheStartedCommand) {
-  const auto result = RunProbe({}, "state", {}, Inject(GetParam().rule));
+  const auto result = RunProbe({}, Inject(GetParam().rule));
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().pid, result.program_pid);
@@ -275,9 +274,8 @@ INSTANTIATE_TEST_SUITE_P(Diagnostics, DiagnosticFailureTest,
 
 TEST_F(FaultTest, InputAliasFailurePreservesInputAndRemovesTemporaryLogs) {
   WriteFile(Path("input"), "keep stdin\n");
-  const auto result =
-      RunProbe({"--stdin", Path("input"), "--stdout", Path("input")}, "state",
-               {}, FaultOptions());
+  const auto result = RunProbe(
+      {"--stdin", Path("input"), "--stdout", Path("input")}, FaultOptions());
 
   EXPECT_EQ(result.exit_code, 1);
   EXPECT_EQ(result.program_pid, -1);
@@ -297,7 +295,7 @@ TEST_F(FaultTest, FailureToReopenDevNullIsReported) {
 TEST_F(FaultTest, FailureToShareOutputOffsetsIsReported) {
   const auto result =
       RunProbe({"--stdout", Path("combined"), "--stderr", Path("combined")},
-               "state", {}, Inject({"dup2", Role::kLauncher, 1, EBADF}));
+               Inject({"dup2", Role::kLauncher, 1, EBADF}));
 
   EXPECT_EQ(result.exit_code, 1);
   EXPECT_NE(result.error.find("stderr:"), std::string::npos);
@@ -346,7 +344,7 @@ class ReportFailureTest : public FaultTest,
 
 TEST_P(ReportFailureTest, KeepsTheCommandAndItsLogsAvailable) {
   const auto result =
-      RunProbe({}, "state", {}, Inject({GetParam(), Role::kLauncher, 1, EIO}));
+      RunProbe({}, Inject({GetParam(), Role::kLauncher, 1, EIO}));
 
   ASSERT_EQ(result.exit_code, 1) << result.error;
   EXPECT_NE(result.error.find("The command may already be running"),
@@ -359,8 +357,7 @@ INSTANTIATE_TEST_SUITE_P(LaunchReport, ReportFailureTest,
                          testing::Values("printf", "fclose"));
 
 TEST_F(FaultTest, StatusReadErrorPreservesThePossiblyRunningCommand) {
-  const auto result =
-      RunProbe({}, "state", {}, Inject({"read", Role::kLauncher, 2, EIO}));
+  const auto result = RunProbe({}, Inject({"read", Role::kLauncher, 2, EIO}));
 
   ASSERT_EQ(result.exit_code, 1) << result.error;
   EXPECT_NE(result.error.find("startup channel:"), std::string::npos);
@@ -423,7 +420,7 @@ class DescriptorEntryTest : public FaultTest,
 TEST_P(DescriptorEntryTest, IgnoresNamesThatAreNotValidDescriptors) {
   auto options = Inject({"readdir", Role::kCommand, 1, FAULT_DIRECTORY_ENTRY});
   options.environment["DETACH_TEST_ENTRY"] = GetParam().value;
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().extra_descriptors, 0);
@@ -449,7 +446,7 @@ TEST_F(FaultTest, IgnoresNonNumericEntriesWhenConversionLeavesErrnoUnchanged) {
       {"strtoimax", Role::kCommand, 1, 0},
   });
   options.environment["DETACH_TEST_ENTRY"] = "not-a-number";
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().extra_descriptors, 0);

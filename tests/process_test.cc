@@ -109,7 +109,7 @@ TEST_F(ProcessTest, PreservesEnvironmentVariables) {
   LaunchOptions options;
   options.environment["DETACH_TEST_VALUE"] = "value with spaces\nand newline";
   const auto result =
-      RunProbe({}, "environment", {"DETACH_TEST_VALUE"}, options);
+      RunProbeMode("environment", {}, {"DETACH_TEST_VALUE"}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -118,7 +118,7 @@ TEST_F(ProcessTest, PreservesEnvironmentVariables) {
 }
 
 TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
-  const auto result = RunProbe({}, "cwd");
+  const auto result = RunProbeMode("cwd");
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -132,7 +132,7 @@ TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
 TEST_F(ProcessTest, PreservesTheFileCreationMask) {
   LaunchOptions options;
   options.file_creation_mask = 0027;
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().creation_mask, 0027);
@@ -148,7 +148,7 @@ TEST_F(ProcessTest, ClosesInternalDescriptorsBeforeExec) {
 TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
   Descriptor inherited(open(Path("inherited").c_str(), O_CREAT | O_RDWR, 0600));
   ASSERT_TRUE(CheckCall(inherited.get(), "open inherited descriptor"));
-  const auto result = RunProbe({}, "state");
+  const auto result = RunProbe();
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().extra_descriptors, 0);
@@ -162,8 +162,8 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
   ASSERT_TRUE(CheckCall(inherited.get(), "dup fd"));
   LaunchOptions options;
   options.descriptor_limit = 32;
-  const auto result =
-      RunProbe({}, "descriptor", {std::to_string(inherited.get())}, options);
+  const auto result = RunProbeMode("descriptor", {},
+                                   {std::to_string(inherited.get())}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -182,7 +182,7 @@ TEST_F(ProcessTest, KeepsTheCallersDefaultSigpipeDisposition) {
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
   LaunchOptions options;
   options.ignored_signals = {SIGPIPE};
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().sigpipe_ignored, 1);
@@ -191,7 +191,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
 TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
   LaunchOptions options;
   options.blocked_signals = {SIGPIPE};
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().sigpipe_blocked, 1);
@@ -200,7 +200,7 @@ TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
 TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
   LaunchOptions options;
   options.blocked_signals = {SIGUSR1};
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().sigusr1_blocked, 1);
@@ -209,7 +209,7 @@ TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
 TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
   LaunchOptions options;
   options.ignored_signals = {SIGCHLD};
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().sigchld_ignored, 1);
@@ -218,7 +218,7 @@ TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
   LaunchOptions options;
   options.ignored_signals = {SIGHUP};
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().sighup_ignored, 1);
@@ -227,7 +227,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
 TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
   LaunchOptions options;
   options.broken_pipes = {STDOUT_FILENO};
-  const auto result = RunProbe({}, "streams", {}, options);
+  const auto result = RunProbeMode("streams", {}, {}, options);
 
   ASSERT_EQ(result.exit_code, 1);
   EXPECT_NE(result.error.find("The command may already be running"),
@@ -259,9 +259,8 @@ TEST_F(ProcessTest, HelpReportsFailureWhenItsOutputCannotBeWritten) {
 TEST_F(ProcessTest, DescriptorExhaustionIsReportedAsAStartupFailure) {
   LaunchOptions options;
   options.descriptor_limit = 7;
-  const auto result =
-      RunProbe({"--stdout", Path("output"), "--stderr", Path("errors")},
-               "state", {}, options);
+  const auto result = RunProbe(
+      {"--stdout", Path("output"), "--stderr", Path("errors")}, options);
 
   EXPECT_EQ(result.exit_code, 1);
   EXPECT_NE(result.error.find("startup channel:"), std::string::npos);
@@ -276,9 +275,10 @@ class ClosedStandardDescriptorsTest : public DetachTest,
 TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
   LaunchOptions options;
   options.closed_standard_descriptors = GetParam();
-  const auto result = RunProbe({"--stdout", Path("output"), "--stderr",
-                                Path("errors"), "--pid", Path("pid")},
-                               "stdio", {}, options);
+  const auto result = RunProbeMode("stdio",
+                                   {"--stdout", Path("output"), "--stderr",
+                                    Path("errors"), "--pid", Path("pid")},
+                                   {}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -325,7 +325,7 @@ class TerminalTest : public DetachTest {
 TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
   LaunchOptions options;
   options.terminal = slave_;
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -337,7 +337,7 @@ TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
 TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
   LaunchOptions options;
   options.terminal = slave_;
-  const auto result = RunProbe({}, "state", {}, options);
+  const auto result = RunProbe({}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -347,7 +347,7 @@ TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
 }
 
 TEST_F(TerminalTest, OpeningATerminalDoesNotMakeItTheControllingTerminal) {
-  const auto result = RunProbe({}, "terminal", {slave_});
+  const auto result = RunProbeMode("terminal", {}, {slave_});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().has_terminal, 0);

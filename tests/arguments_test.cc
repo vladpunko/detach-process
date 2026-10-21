@@ -77,7 +77,7 @@ TEST_F(ArgumentsTest, CommandArgumentsArePreservedExactly) {
       "роза",
       std::string(16384, 'x'),
   };
-  const auto result = RunProbe({}, "arguments", arguments);
+  const auto result = RunProbeMode("arguments", {}, arguments);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -97,8 +97,8 @@ TEST_F(ArgumentsTest, ParsingStopsAtTheCommandWithoutASeparator) {
 }
 
 TEST_F(ArgumentsTest, RepeatedOptionsUseTheLastValue) {
-  const auto result = RunProbe(
-      {"--stdout", Path("unused"), "--stdout", Path("selected")}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {"--stdout", Path("unused"), "--stdout", Path("selected")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -108,7 +108,7 @@ TEST_F(ArgumentsTest, RepeatedOptionsUseTheLastValue) {
 }
 
 TEST_F(ArgumentsTest, SeparatorCanAlsoBeAnOptionValue) {
-  const auto result = RunProbe({"--stdout", "--"}, "streams");
+  const auto result = RunProbeMode("streams", {"--stdout", "--"});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -116,7 +116,7 @@ TEST_F(ArgumentsTest, SeparatorCanAlsoBeAnOptionValue) {
 }
 
 TEST_F(ArgumentsTest, AttachedOptionValueIsAccepted) {
-  const auto result = RunProbe({"--stdout=" + Path("output")}, "streams");
+  const auto result = RunProbeMode("streams", {"--stdout=" + Path("output")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();

@@ -34,11 +34,15 @@ class DetachTest : public testing::Test {
   LaunchResult Run(const std::vector<std::string>& arguments,
                    const LaunchOptions& options = {});
 
-  // Starts the probe and keeps it alive until test cleanup.
+  // Starts the probe that reports process state and waits for cleanup.
   LaunchResult RunProbe(const std::vector<std::string>& options = {},
-                        const std::string& mode = "state",
-                        const std::vector<std::string>& arguments = {},
                         const LaunchOptions& launch_options = {});
+
+  // Runs a probe scenario such as copying stdin or writing both output streams.
+  LaunchResult RunProbeMode(const std::string& mode,
+                            const std::vector<std::string>& options = {},
+                            const std::vector<std::string>& arguments = {},
+                            const LaunchOptions& launch_options = {});
 
   ProbeState ReadProbe();
   void PingProbe();

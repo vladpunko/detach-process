@@ -25,7 +25,7 @@ using FilesTest = DetachTest;
 TEST_F(FilesTest, DefaultLogsAreDistinctPrivateTemporaryFiles) {
   LaunchOptions options;
   options.file_creation_mask = 0;
-  const auto result = RunProbe({}, "streams", {}, options);
+  const auto result = RunProbeMode("streams", {}, {}, options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -39,7 +39,7 @@ TEST_F(FilesTest, DefaultLogsAreDistinctPrivateTemporaryFiles) {
 }
 
 TEST_F(FilesTest, DefaultInputIsDevNull) {
-  const auto result = RunProbe({}, "stdio");
+  const auto result = RunProbeMode("stdio");
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().stdin_is_null, 1);
@@ -51,9 +51,9 @@ TEST_F(FilesTest, RedirectsAllThreeStreams) {
   constexpr char input[] = "input\nwith\0binary data\n";
   const std::string contents(input, sizeof(input) - 1);
   WriteFile(Path("input"), contents);
-  const auto result = RunProbe({"--stdin", Path("input"), "--stdout",
-                                Path("output"), "--stderr", Path("errors")},
-                               "stdio");
+  const auto result =
+      RunProbeMode("stdio", {"--stdin", Path("input"), "--stdout",
+                             Path("output"), "--stderr", Path("errors")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   EXPECT_EQ(ReadProbe().stdin_is_null, 0);
@@ -65,7 +65,7 @@ TEST_F(FilesTest, RedirectsAllThreeStreams) {
 TEST_F(FilesTest, CopiesInputLargerThanAnIoBuffer) {
   const std::string contents(1024 * 1024, 'x');
   WriteFile(Path("input"), contents);
-  const auto result = RunProbe({"--stdin", Path("input")}, "stdio");
+  const auto result = RunProbeMode("stdio", {"--stdin", Path("input")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -77,8 +77,8 @@ TEST_F(FilesTest, ExistingOutputsAreTruncatedWithoutChangingTheirPermissions) {
   WriteFile(Path("errors"), std::string(1000, 'y'));
   ASSERT_TRUE(CheckCall(chmod(Path("output").c_str(), 0640), "chmod"));
   ASSERT_TRUE(CheckCall(chmod(Path("errors").c_str(), 0644), "chmod"));
-  const auto result = RunProbe(
-      {"--stdout", Path("output"), "--stderr", Path("errors")}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {"--stdout", Path("output"), "--stderr", Path("errors")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -93,7 +93,7 @@ TEST_F(FilesTest, NewlyCreatedOutputAndPidFilesArePrivate) {
   options.file_creation_mask = 0;
   const auto result = RunProbe({"--stdout", Path("output"), "--stderr",
                                 Path("errors"), "--pid", Path("pid")},
-                               "state", {}, options);
+                               options);
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -105,9 +105,8 @@ TEST_F(FilesTest, NewlyCreatedOutputAndPidFilesArePrivate) {
 TEST_F(FilesTest, RelativePathsAndSpacesInPathsWork) {
   WriteFile(Path("input file"), "contents\n");
   const auto result =
-      RunProbe({"--stdin", "input file", "--stdout", "output file", "--stderr",
-                "error file", "--pid", "pid file"},
-               "stdio");
+      RunProbeMode("stdio", {"--stdin", "input file", "--stdout", "output file",
+                             "--stderr", "error file", "--pid", "pid file"});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -119,7 +118,7 @@ TEST_F(FilesTest, RelativePathsAndSpacesInPathsWork) {
 TEST_F(FilesTest, PidFileIsCompleteBeforeTheCommandStarts) {
   WriteFile(Path("pid"), std::string(1000, '9'));
   const auto result =
-      RunProbe({"--pid", Path("pid")}, "pid-file", {Path("pid")});
+      RunProbeMode("pid-file", {"--pid", Path("pid")}, {Path("pid")});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -129,8 +128,8 @@ TEST_F(FilesTest, PidFileIsCompleteBeforeTheCommandStarts) {
 }
 
 TEST_F(FilesTest, DevNullCanReceiveBothOutputStreams) {
-  const auto result =
-      RunProbe({"--stdout", "/dev/null", "--stderr", "/dev/null"}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {"--stdout", "/dev/null", "--stderr", "/dev/null"});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -144,8 +143,8 @@ TEST_F(FilesTest, OutputCanBeAPipe) {
   Descriptor reader(channel[0]);
   Descriptor writer(channel[1]);
   ASSERT_TRUE(CheckCall(fcntl(reader.get(), F_SETFL, O_NONBLOCK), "fcntl"));
-  const auto result = RunProbe(
-      {"--stdout", "/dev/fd/" + std::to_string(writer.get())}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {"--stdout", "/dev/fd/" + std::to_string(writer.get())});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
@@ -180,8 +179,8 @@ TEST_P(InheritedOutputTest, WritesFromTheStartOfAReusedRegularFile) {
   // macOS /dev/fd preserves this offset when opening the inherited handle.
   // Truncating the file alone would leave a gap before the new contents.
   const std::string option = GetParam();
-  const auto result = RunProbe(
-      {option, "/dev/fd/" + std::to_string(inherited.get())}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {option, "/dev/fd/" + std::to_string(inherited.get())});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   const auto state = ReadProbe();
@@ -319,8 +318,8 @@ class SharedOutputTest : public DetachTest,
 TEST_P(SharedOutputTest, BothStreamsShareAnOffsetWhenTheyReferToTheSameFile) {
   WriteFile(Path("combined"), std::string(1000, 'x'));
   const auto errors = CreateAlias(GetParam(), Path("combined"), Path("alias"));
-  const auto result =
-      RunProbe({"--stdout", Path("combined"), "--stderr", errors}, "streams");
+  const auto result = RunProbeMode(
+      "streams", {"--stdout", Path("combined"), "--stderr", errors});
 
   ASSERT_EQ(result.exit_code, 0) << result.error;
   ReadProbe();
