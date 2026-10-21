@@ -10,6 +10,8 @@
 
 // The probe and tests are built together and exchange this record locally.
 // Named, fixed-width fields keep both C and C++ readers on the same layout.
+// The native record travels between executables built together on this host.
+// A complete record also confirms the helper finished its preceding output.
 typedef struct ProbeState {
   int64_t pid;
   int64_t parent_pid;

@@ -35,7 +35,8 @@ constexpr auto kTimeout = std::chrono::seconds(5);
 // Reserve this status for failed test setup, separate from detach exit codes.
 constexpr int kLauncherFailure = 125;
 
-// Child setup must exit immediately on failure, without unwinding GoogleTest.
+// Setup runs in a forked copy of GoogleTest. On failure, exit immediately so
+// that copy cannot run the test body or repeat the parent's fixture cleanup.
 void RequireChildCall(int result, const char* operation) {
   if (result < 0) {
     perror(operation);
@@ -43,6 +44,8 @@ void RequireChildCall(int result, const char* operation) {
   }
 }
 
+// Make the caller a terminal owner first. Otherwise, a detachment test could
+// pass merely because there was no controlling terminal to lose.
 void PrepareTerminal(const std::string& path) {
   if (path.empty()) {
     return;
@@ -141,7 +144,8 @@ testing::AssertionResult WaitForLauncher(LaunchResult& result) {
       return testing::AssertionFailure()
              << "detach did not return before the deadline";
     }
-    // Retry reaping with a deadline, without assuming when exec completes.
+    // A short pause avoids spinning on waitpid(WNOHANG). Readiness still comes
+    // from waitpid itself, rather than an assumed startup delay.
     poll(nullptr, 0, 5);
   }
   if (WIFEXITED(result.status)) {
@@ -150,6 +154,8 @@ testing::AssertionResult WaitForLauncher(LaunchResult& result) {
   return testing::AssertionSuccess();
 }
 
+// Use the utility's public report, including its stderr fallback when stdout
+// cannot be written. Tests then inspect the same PID and paths a user receives.
 void ParseReport(const std::string& text, LaunchResult& result) {
   std::istringstream lines(text);
   std::string line;
@@ -177,7 +183,9 @@ LaunchResult RunDetach(const std::vector<std::string>& arguments,
   const std::string report_path = directory + "/launcher.out";
   const std::string error_path = directory + "/launcher.err";
   LaunchResult result;
-  // Captures belong to the fixture and must not leak into the utility.
+  // Regular files let us collect the report after the launcher exits without
+  // waiting for EOF from its descendants. CLOEXEC keeps capture handles out of
+  // the command being tested. Its actual stdout and stderr use separate files.
   Descriptor report(open(report_path.c_str(),
                          O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600));
   EXPECT_TRUE(CheckCall(report.get(), "open report"));
@@ -216,6 +224,8 @@ LaunchResult RunDetach(const std::vector<std::string>& arguments,
     _exit(kLauncherFailure);
   }
 
+  // The launcher has finished flushing its own report. The probe socket will
+  // separately tell the test when the detached command has finished its I/O.
   EXPECT_TRUE(WaitForLauncher(result));
   result.output = ReadFile(report_path);
   result.error = ReadFile(error_path);

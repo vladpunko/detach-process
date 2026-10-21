@@ -253,7 +253,8 @@ int main(int argc, char* argv[]) {
   if (argc < 3) {
     return EXIT_FAILURE;
   }
-  // A failed test cannot leave this detached helper alive indefinitely.
+  // Bound the helper's lifetime even if a regression blocks its scenario or
+  // prevents it from reaching the control socket used for normal cleanup.
   alarm(15);
   if (!run_mode(argc, argv) || fflush(NULL) == EOF) {
     return EXIT_FAILURE;

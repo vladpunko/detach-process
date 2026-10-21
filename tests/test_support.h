@@ -18,7 +18,9 @@
 
 namespace detach_test {
 
-// Gives each test its own directory, launcher captures and controlled probe.
+// Coordinates one integration test from setup to cleanup.
+// Run waits for detach to return. The detached probe stays alive so the test
+// can inspect it, then TearDown releases the probe before deleting its files.
 class DetachTest : public testing::Test {
  protected:
   void SetUp() override;
@@ -30,11 +32,14 @@ class DetachTest : public testing::Test {
       const std::string& mode = "state",
       const std::vector<std::string>& arguments = {}) const;
 
-  // Runs detach with the exact command line supplied by the test.
+  // Runs the exact detach command line and captures the launcher's report.
+  // Default log paths are remembered for cleanup even if a later assertion
+  // fails.
   LaunchResult Run(const std::vector<std::string>& arguments,
                    const LaunchOptions& options = {});
 
-  // Starts the probe that reports process state and waits for cleanup.
+  // Starts a probe that reports process state and waits for cleanup.
+  // options belong to detach, while launch_options describe its caller.
   LaunchResult RunProbe(const std::vector<std::string>& options = {},
                         const LaunchOptions& launch_options = {});
 
@@ -44,7 +49,12 @@ class DetachTest : public testing::Test {
                             const std::vector<std::string>& arguments = {},
                             const LaunchOptions& launch_options = {});
 
+  // Waits for the probe to finish its selected I/O and report its process
+  // state. Read this before checking output files so their contents are
+  // complete.
   ProbeState ReadProbe();
+  // Confirms that the detached command is still responsive after an event such
+  // as closing its original terminal or encountering a launcher report error.
   void PingProbe();
 
  private:

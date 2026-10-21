@@ -50,6 +50,8 @@ std::string ReadFile(const std::string& path) {
   while (stream.read(buffer, sizeof(buffer)) || stream.gcount() > 0) {
     contents.append(buffer, static_cast<size_t>(stream.gcount()));
   }
+  // EOF is expected here. Other read errors must not look like a short file
+  // and accidentally satisfy an assertion about empty or truncated output.
   if (stream.bad() || !stream.eof()) {
     ADD_FAILURE() << "Cannot read " << path;
   }

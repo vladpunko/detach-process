@@ -5,6 +5,13 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+// Run real detach code while failing selected system calls deterministically.
+// DETACH_TEST_FAULTS contains role:operation:occurrence:result rules. For
+// example, launcher:read:1:0 simulates EOF on the launcher's first read.
+// Wrappers pass all other calls through to the OS. The final include below
+// applies them only to this test executable, leaving the production build
+// intact.
+
 // Include the real declarations before replacing calls in the utility below.
 #include "tests/faults.h"
 
@@ -29,6 +36,8 @@ int __llvm_profile_write_file(void);
 void __llvm_profile_set_filename(const char* name);
 #endif
 
+// The original parent runs detach, the first child creates the session, and
+// the second child starts the user's command. Counters are local to each role.
 enum process_role { LAUNCHER, INTERMEDIATE, COMMAND };
 
 struct fault_rule {
@@ -89,6 +98,8 @@ static const struct fault_rule* find_fault(const char* operation) {
   return matched;
 }
 
+// exec and _exit bypass the normal coverage shutdown handler. Flush before
+// either operation so child setup and failure branches appear in the report.
 static void write_profile(void) {
 #ifdef DETACH_TEST_COVERAGE
   __llvm_profile_write_file();
@@ -101,6 +112,8 @@ static pid_t fault_fork(void) {
   }
   pid_t pid = fork();
   if (pid == 0) {
+    // Each ordered fork advances only the child to the next startup role.
+    // The parent retains its own role and counters in its separate memory.
     current_role += 1;
     for (size_t index = 0; index < rule_count; index += 1) {
       rules[index].calls = 0;

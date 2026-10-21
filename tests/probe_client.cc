@@ -88,6 +88,8 @@ testing::AssertionResult ReadExactly(int fd, Clock::time_point deadline,
 void ProbeClient::Listen(const std::string& path) {
   listener_.Reset(socket(AF_UNIX, SOCK_STREAM, 0));
   ASSERT_TRUE(CheckCall(listener_.get(), "socket"));
+  // The test's listener is not an inherited command descriptor. Hiding it at
+  // exec keeps descriptor-leak checks focused on the utility's own behavior.
   ASSERT_TRUE(CheckCall(fcntl(listener_.get(), F_SETFD, FD_CLOEXEC), "fcntl"));
   struct sockaddr_un address = {};
   address.sun_family = AF_UNIX;
@@ -115,6 +117,8 @@ testing::AssertionResult ProbeClient::ReceiveState(ProbeState& state) {
   if (accepted < 0) {
     return CheckCall(-1, "accept probe");
   }
+  // The helper connects only after finishing and flushing its selected I/O.
+  // Receiving the full state is our readiness barrier for output assertions.
   const auto reported =
       ReadExactly(peer_.get(), deadline, sizeof(state), &state);
   if (!reported) {
@@ -154,6 +158,8 @@ void ProbeClient::Close() {
 }
 
 testing::AssertionResult ProbeClient::Stop() {
+  // A fatal assertion may skip ReadState after a successful launch. Accept the
+  // pending probe here as well so that failure still gets normal cleanup.
   if (pid_ > 0 && peer_.get() < 0) {
     ProbeState state = {};
     const auto reported = ReceiveState(state);
@@ -167,6 +173,7 @@ testing::AssertionResult ProbeClient::Stop() {
 
   // EOF releases the probe even when an assertion stopped the test.
   // Drain until EOF to confirm it finished using the per-test files.
+  // waitpid cannot reap this process because detach reparented it.
   shutdown(peer_.get(), SHUT_WR);
   const auto deadline = Clock::now() + kTimeout;
   char buffer[256];

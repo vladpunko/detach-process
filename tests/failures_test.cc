@@ -150,6 +150,8 @@ TEST_P(StartupFailureTest, ReportsTheFailureAndRemovesTemporaryLogs) {
 
 // Call numbers are local to each role and include earlier setup operations.
 // The launcher checks three standard fds before marking the startup socket.
+// Its fstat order is stdout, stderr, optional PID, then stdin. The command's
+// first three close calls release original stream fds after redirecting them.
 const FaultCase kStartupFailures[] = {
     {"SignalMask", {"sigemptyset", Role::kLauncher, 1, EIO}, "SIGPIPE:"},
     {"SignalDisposition", {"sigaction", Role::kLauncher, 1, EIO}, "SIGPIPE:"},
@@ -388,6 +390,8 @@ TEST_F(FaultTest, LostFailureReportHasTheDocumentedEofStartupStatus) {
   EXPECT_NE(ReadFile(Path("errors")).find("exec:"), std::string::npos);
 }
 
+// A malformed permission byte stops the command before exec. The parent sees
+// EOF without a failure byte, exercising the documented handshake limitation.
 TEST_F(FaultTest, InvalidPermissionStopsTheCommandBeforeExec) {
   const auto result =
       Run({"--stdout", Path("output"), "--stderr", Path("errors"), "--",
