@@ -20,11 +20,7 @@ jobs:
   build:
     strategy:
       matrix:
-        include:
-          - os: ubuntu-latest
-            coverage: "OFF"
-          - os: macos-latest
-            coverage: "ON"
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -35,24 +31,34 @@ jobs:
         run: cc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
 
       - name: Step -- 3.
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DENABLE_COVERAGE=${{ matrix.coverage }} -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
 
       - name: Step -- 4.
         run: cmake --build build --parallel 2
 
       - name: Step -- 5.
-        env:
-          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/profiles/%m-%p.profraw
         run: ctest --test-dir build --output-on-failure --parallel 2
 
+      # Instrument only the fault executable after checking the production binary.
       - name: Step -- 6.
-        if: matrix.coverage == 'ON'
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S . -B build -DENABLE_COVERAGE=ON
+          cmake --build build --target detach_faults --parallel 2
+
+      - name: Step -- 7.
+        if: runner.os == 'macOS'
+        env:
+          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/coverage-profiles/%m-%p.profraw
+          DETACH_TEST_EXECUTABLE: ${{ github.workspace }}/build/tests/detach_faults
         run: |
           cmake -E remove_directory build/coverage-profiles
           mkdir -p build/coverage-profiles
-          export LLVM_PROFILE_FILE="${GITHUB_WORKSPACE}/build/coverage-profiles/%m-%p.profraw"
-          export DETACH_TEST_EXECUTABLE="${GITHUB_WORKSPACE}/build/tests/detach_faults"
           ctest --test-dir build --output-on-failure --parallel 2
+
+      - name: Step -- 8.
+        if: runner.os == 'macOS'
+        run: |
           xcrun llvm-profdata merge -sparse build/coverage-profiles/*.profraw -o build/coverage.profdata
           xcrun llvm-cov report build/tests/detach_faults -instr-profile=build/coverage.profdata detach.c
           xcrun llvm-cov export build/tests/detach_faults -instr-profile=build/coverage.profdata -format=lcov detach.c > build/coverage.lcov
