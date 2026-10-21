@@ -104,6 +104,15 @@ Tests are grouped by behavior:
 - `tests/process_test.cc`: sessions, terminals, signals, inherited descriptors, environment, and startup status.
 - `tests/failures_test.cc`: system-call failures, interrupted I/O, partial transfers, diagnostic errors, and cleanup.
 
+Start reading the test infrastructure at `tests/test_support.h`. The fixture prepares a test directory, runs a command and releases its probe during cleanup. Its helpers have separate responsibilities:
+
+| Module | Responsibility |
+| --- | --- |
+| `tests/test_support.cc` | Test setup, command construction and cleanup of temporary logs. |
+| `tests/test_launcher.cc` | Caller environment, process launch, bounded wait and captured reports. |
+| `tests/probe_client.cc` | Probe readiness, process state, liveness checks and shutdown. |
+| `tests/test_files.cc` | Descriptor ownership and basic file operations. |
+
 `tests/probe.c` reports the detached command's state over a local socket and stays alive until the test releases it. This lets tests verify that `detach` returns while the command is still running. Terminal tests use a real pseudoterminal and check that closing it leaves the detached command responsive. Each test has its own temporary directory, bounded waits, and cleanup for reported temporary logs.
 
 `tests/faults.c` compiles the unchanged utility into a separate test executable with controlled system calls. Rules select the process, operation, call number, and result. These checks exercise failures that are difficult to reproduce reliably through OS resource limits. The production executable uses the original system calls.

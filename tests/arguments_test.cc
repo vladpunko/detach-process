@@ -8,6 +8,8 @@
 
 #include "gtest/gtest.h"
 
+#include "tests/test_files.h"
+#include "tests/test_launcher.h"
 #include "tests/test_support.h"
 
 namespace detach_test {

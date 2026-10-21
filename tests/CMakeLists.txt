@@ -55,6 +55,9 @@ add_executable(detach_tests
     files_test.cc
     failures_test.cc
     process_test.cc
+    probe_client.cc
+    test_files.cc
+    test_launcher.cc
     test_support.cc
 )
 set_target_properties(detach_tests PROPERTIES
