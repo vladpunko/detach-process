@@ -3,7 +3,7 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#include <stdexcept>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -50,7 +50,7 @@ TEST_F(ArgumentsTest, OptionsWithoutACommandDoNotCreateFiles) {
 
     EXPECT_EQ(result.exit_code, 1);
     EXPECT_NE(result.error.find("Missing command"), std::string::npos);
-    EXPECT_THROW(ReadFile(Path("output")), std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(Path("output")));
 }
 
 TEST_F(ArgumentsTest, CommandDoesNotRequireASeparatorWhenNoOptionsAreUsed) {
@@ -94,7 +94,7 @@ TEST_F(ArgumentsTest, RepeatedOptionsUseTheLastValue) {
     ReadProbe();
     EXPECT_EQ(result.stdout_path, Path("selected"));
     EXPECT_EQ(ReadFile(Path("selected")), "stdout one\nstdout two\n");
-    EXPECT_THROW(ReadFile(Path("unused")), std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(Path("unused")));
 }
 
 TEST_F(ArgumentsTest, SeparatorCanAlsoBeAnOptionValue) {

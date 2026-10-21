@@ -58,7 +58,7 @@ TEST_F(ProcessTest, ReportsStartupSuccessEvenWhenTheCommandKillsItself) {
 }
 
 TEST_F(ProcessTest, LooksUpTheCommandInPath) {
-    CheckCall(symlink(PROBE_PATH, Path("probe-command").c_str()), "symlink");
+    ASSERT_TRUE(CheckCall(symlink(PROBE_PATH, Path("probe-command").c_str()), "symlink"));
     LaunchOptions options;
     options.environment["PATH"] = Path(".");
     const auto result = Run({"--", "probe-command", "state", SocketPath()},
@@ -81,7 +81,7 @@ TEST_F(ProcessTest, ExecutableScriptRunsItsInterpreter) {
     // An explicit interpreter works across macOS, glibc and musl.
     // Replace the shell with the probe so the reported PID remains verifiable.
     WriteFile(Path("command"), "#!/bin/sh\nexec \"${@}\"\n");
-    CheckCall(chmod(Path("command").c_str(), 0700), "chmod script");
+    ASSERT_TRUE(CheckCall(chmod(Path("command").c_str(), 0700), "chmod script"));
     const auto result = Run({"--", Path("command"),
                              PROBE_PATH, "state", SocketPath()});
 
@@ -92,7 +92,7 @@ TEST_F(ProcessTest, ExecutableScriptRunsItsInterpreter) {
 
 TEST_F(ProcessTest, MissingScriptInterpreterIsAStartupFailure) {
     WriteFile(Path("command"), "#!" + Path("missing-interpreter") + "\n");
-    CheckCall(chmod(Path("command").c_str(), 0700), "chmod script");
+    ASSERT_TRUE(CheckCall(chmod(Path("command").c_str(), 0700), "chmod script"));
     const auto result = Run({"--", Path("command")});
 
     EXPECT_EQ(result.exit_code, 1);
@@ -138,8 +138,9 @@ TEST_F(ProcessTest, ClosesInternalDescriptorsBeforeExec) {
 }
 
 TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
-    Descriptor inherited(CheckCall(open(Path("inherited").c_str(),
-        O_CREAT | O_RDWR, 0600), "open inherited descriptor"));
+    Descriptor inherited(open(Path("inherited").c_str(),
+        O_CREAT | O_RDWR, 0600));
+    ASSERT_TRUE(CheckCall(inherited.Get(), "open inherited descriptor"));
     const auto result = RunProbe({}, "state");
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
@@ -148,9 +149,10 @@ TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
 }
 
 TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
-    Descriptor source(CheckCall(open("/dev/null", O_RDONLY), "open /dev/null"));
-    Descriptor inherited(CheckCall(fcntl(source.Get(), F_DUPFD, 128),
-                                     "dup fd"));
+    Descriptor source(open("/dev/null", O_RDONLY));
+    ASSERT_TRUE(CheckCall(source.Get(), "open /dev/null"));
+    Descriptor inherited(fcntl(source.Get(), F_DUPFD, 128));
+    ASSERT_TRUE(CheckCall(inherited.Get(), "dup fd"));
     LaunchOptions options;
     options.descriptor_limit = 32;
     const auto result = RunProbe({}, "descriptor",
@@ -299,11 +301,11 @@ class TerminalTest : public DetachTest {
         if (HasFatalFailure()) {
             return;
         }
-        terminal_.Reset(CheckCall(posix_openpt(O_RDWR | O_NOCTTY),
-                                   "posix_openpt"));
-        CheckCall(fcntl(terminal_.Get(), F_SETFD, FD_CLOEXEC), "fcntl");
-        CheckCall(grantpt(terminal_.Get()), "grantpt");
-        CheckCall(unlockpt(terminal_.Get()), "unlockpt");
+        terminal_.Reset(posix_openpt(O_RDWR | O_NOCTTY));
+        ASSERT_TRUE(CheckCall(terminal_.Get(), "posix_openpt"));
+        ASSERT_TRUE(CheckCall(fcntl(terminal_.Get(), F_SETFD, FD_CLOEXEC), "fcntl"));
+        ASSERT_TRUE(CheckCall(grantpt(terminal_.Get()), "grantpt"));
+        ASSERT_TRUE(CheckCall(unlockpt(terminal_.Get()), "unlockpt"));
         char *name = ptsname(terminal_.Get());
         ASSERT_NE(name, nullptr);
         slave_ = name;

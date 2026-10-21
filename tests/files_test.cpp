@@ -71,8 +71,8 @@ TEST_F(FilesTest, CopiesInputLargerThanAnIoBuffer) {
 TEST_F(FilesTest, ExistingOutputsAreTruncatedWithoutChangingTheirPermissions) {
     WriteFile(Path("output"), std::string(1000, 'x'));
     WriteFile(Path("errors"), std::string(1000, 'y'));
-    CheckCall(chmod(Path("output").c_str(), 0640), "chmod");
-    CheckCall(chmod(Path("errors").c_str(), 0644), "chmod");
+    ASSERT_TRUE(CheckCall(chmod(Path("output").c_str(), 0640), "chmod"));
+    ASSERT_TRUE(CheckCall(chmod(Path("errors").c_str(), 0644), "chmod"));
     const auto result = RunProbe({"--stdout", Path("output"),
                                   "--stderr", Path("errors")}, "streams");
 
@@ -137,10 +137,10 @@ TEST_F(FilesTest, DevNullCanReceiveBothOutputStreams) {
 
 TEST_F(FilesTest, OutputCanBeAPipe) {
     int channel[2];
-    CheckCall(pipe(channel), "pipe");
+    ASSERT_TRUE(CheckCall(pipe(channel), "pipe"));
     Descriptor reader(channel[0]);
     Descriptor writer(channel[1]);
-    CheckCall(fcntl(reader.Get(), F_SETFL, O_NONBLOCK), "fcntl");
+    ASSERT_TRUE(CheckCall(fcntl(reader.Get(), F_SETFL, O_NONBLOCK), "fcntl"));
     const auto result = RunProbe({"--stdout",
         "/dev/fd/" + std::to_string(writer.Get())}, "streams");
 
@@ -151,10 +151,10 @@ TEST_F(FilesTest, OutputCanBeAPipe) {
 
 TEST_F(FilesTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
     int channel[2];
-    CheckCall(pipe(channel), "pipe");
+    ASSERT_TRUE(CheckCall(pipe(channel), "pipe"));
     Descriptor reader(channel[0]);
     Descriptor writer(channel[1]);
-    CheckCall(fcntl(reader.Get(), F_SETFL, O_NONBLOCK), "fcntl");
+    ASSERT_TRUE(CheckCall(fcntl(reader.Get(), F_SETFL, O_NONBLOCK), "fcntl"));
     const auto result = RunProbe({"--pid",
         "/dev/fd/" + std::to_string(writer.Get())});
 
@@ -171,8 +171,8 @@ class InheritedOutputTest : public DetachTest,
 
 TEST_P(InheritedOutputTest, WritesFromTheStartOfAReusedRegularFile) {
     WriteFile(Path("reused"), "old contents\n");
-    Descriptor inherited(CheckCall(open(Path("reused").c_str(), O_WRONLY),
-                                    "open inherited output"));
+    Descriptor inherited(open(Path("reused").c_str(), O_WRONLY));
+    ASSERT_TRUE(CheckCall(inherited.Get(), "open inherited output"));
     ASSERT_GT(lseek(inherited.Get(), 0, SEEK_END), 0);
 
     // macOS /dev/fd preserves this offset when opening the inherited handle.
@@ -265,7 +265,7 @@ TEST_F(FilesTest, ExecFailureReportsAnExplicitStderrWithTemporaryStdout) {
 
 TEST_F(FilesTest, NonExecutableCommandIsAnExecFailure) {
     WriteFile(Path("command"), "not executable\n");
-    CheckCall(chmod(Path("command").c_str(), 0600), "chmod");
+    ASSERT_TRUE(CheckCall(chmod(Path("command").c_str(), 0600), "chmod"));
     const auto result = Run({"--", Path("command")});
 
     EXPECT_EQ(result.exit_code, 1);
@@ -299,9 +299,9 @@ std::string CreateAlias(AliasKind kind, const std::string &target,
         return target;
     }
     if (kind == AliasKind::kHardLink) {
-        CheckCall(link(target.c_str(), alias.c_str()), "link");
+        EXPECT_TRUE(CheckCall(link(target.c_str(), alias.c_str()), "link"));
     } else if (kind == AliasKind::kSymbolicLink) {
-        CheckCall(symlink(target.c_str(), alias.c_str()), "symlink");
+        EXPECT_TRUE(CheckCall(symlink(target.c_str(), alias.c_str()), "symlink"));
     }
     return alias;
 }

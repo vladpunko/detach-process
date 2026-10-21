@@ -59,7 +59,8 @@ struct LaunchResult {
     std::string stderr_path;
 };
 
-int CheckCall(int result, const char *operation);
+// Describes a failed POSIX call for ASSERT_TRUE or EXPECT_TRUE.
+testing::AssertionResult CheckCall(int result, const char* operation);
 std::string ReadFile(const std::string &path);
 // Read a nonblocking pipe after the probe confirms its writes are complete.
 std::string ReadAvailable(int fd);
@@ -88,7 +89,8 @@ class DetachTest : public testing::Test {
     void PingProbe();
 
  private:
-    void StopProbe();
+    testing::AssertionResult ReadProbeState(ProbeState& state);
+    testing::AssertionResult StopProbe();
 
     std::string directory_;
     // Accept one report, then use the peer for liveness checks and shutdown.

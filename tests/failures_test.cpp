@@ -10,7 +10,6 @@
 #include <filesystem>
 #include <initializer_list>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -45,7 +44,8 @@ const char *RoleName(Role role) {
     case Role::kCommand:
         return "command";
     }
-    throw std::logic_error("Unknown fault process role");
+    ADD_FAILURE() << "Unknown fault process role";
+    return "";
 }
 
 std::string FaultName(const testing::TestParamInfo<FaultCase> &info) {
@@ -58,17 +58,12 @@ class FaultTest : public DetachTest {
         DetachTest::SetUp();
         if (!HasFatalFailure()) {
             WriteFile(Path("events"), "");
-            events_ready_ = true;
+            events_ready_ = !HasFatalFailure();
         }
     }
 
     void TearDown() override {
-        std::vector<std::string> paths;
-        try {
-            paths = TemporaryFiles();
-        } catch (const std::exception &error) {
-            ADD_FAILURE() << error.what();
-        }
+        const auto paths = TemporaryFiles();
         // A broken event log must not prevent releasing the probe and sockets.
         DetachTest::TearDown();
         // Also clean files from intentionally failed unlink calls.
@@ -134,8 +129,9 @@ class StartupFailureTest : public FaultTest,
     void SetUp() override {
         FaultTest::SetUp();
         if (!HasFatalFailure()) {
-            inherited_.Reset(CheckCall(open(Path("inherited").c_str(),
-                O_CREAT | O_RDWR, 0600), "open inherited descriptor"));
+            inherited_.Reset(open(Path("inherited").c_str(),
+                O_CREAT | O_RDWR, 0600));
+            ASSERT_TRUE(CheckCall(inherited_.Get(), "open inherited descriptor"));
         }
     }
 

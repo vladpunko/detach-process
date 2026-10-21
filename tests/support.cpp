@@ -25,9 +25,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
-#include <stdexcept>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace detach_test {
@@ -38,49 +36,57 @@ constexpr auto kTimeout = std::chrono::seconds(5);
 // Separate fixture setup failures from exit codes returned by detach itself.
 constexpr int kLauncherFailure = 125;
 
-void WaitReadable(int fd, Clock::time_point deadline) {
+testing::AssertionResult WaitReadable(int fd, Clock::time_point deadline) {
     while (Clock::now() < deadline) {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - Clock::now()).count();
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - Clock::now()).count();
         struct pollfd event = {fd, POLLIN, 0};
-        int result = poll(&event, 1, std::max(1, static_cast<int>(remaining)));
+        const int result = poll(&event, 1,
+                               std::max(1, static_cast<int>(remaining)));
         if (result > 0) {
             if (event.revents & POLLNVAL) {
-                throw std::runtime_error("Probe descriptor is invalid");
+                return testing::AssertionFailure() << "Invalid probe descriptor";
             }
-            // Read on hangup too so callers can distinguish EOF from data.
+            // Hangup is readable so the caller can distinguish EOF from data.
             if (event.revents & (POLLIN | POLLHUP)) {
-                return;
+                return testing::AssertionSuccess();
             }
             if (event.revents & POLLERR) {
-                throw std::runtime_error("Probe socket reported an I/O error");
+                return testing::AssertionFailure() << "Probe socket I/O error";
             }
         }
         if (result < 0 && errno != EINTR) {
-            CheckCall(result, "poll");
+            return CheckCall(result, "poll probe");
         }
     }
-    throw std::runtime_error("Timed out waiting for the probe");
+    return testing::AssertionFailure() << "Timed out waiting for the probe";
 }
 
-void ReadExactly(int fd, void *buffer, size_t remaining,
-                 Clock::time_point deadline) {
-    // A stream socket may split a record across multiple reads.
-    auto *next = static_cast<char *>(buffer);
-    while (remaining > 0) {
-        WaitReadable(fd, deadline);
-        ssize_t length = read(fd, next, remaining);
-        if (length < 0 && errno == EINTR) {
-            continue;
+// Reads one complete record using a single deadline across partial transfers.
+testing::AssertionResult ReadExactly(int fd, Clock::time_point deadline,
+                                     size_t size, void* buffer) {
+    auto* next = static_cast<char*>(buffer);
+    while (size > 0) {
+        const auto ready = WaitReadable(fd, deadline);
+        if (!ready) {
+            return ready;
         }
-        CheckCall(static_cast<int>(length), "read probe");
+        const ssize_t length = read(fd, next, size);
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return CheckCall(-1, "read probe");
+        }
         if (length == 0) {
-            throw std::runtime_error(
-                "Probe closed before sending the expected data");
+            return testing::AssertionFailure()
+                   << "Probe closed before sending the expected data";
         }
         next += length;
-        remaining -= static_cast<size_t>(length);
+        size -= static_cast<size_t>(length);
     }
+    return testing::AssertionSuccess();
 }
 
 // Child setup must exit immediately on failure, without unwinding GoogleTest.
@@ -172,41 +178,43 @@ void PrepareChild(const LaunchOptions &options, int report_fd, int error_fd) {
 
 // Reap our direct child before reading its report, with a bound on hangs.
 // The detached probe has a different parent and is released through its socket.
-void WaitForLauncher(LaunchResult *result) {
+testing::AssertionResult WaitForLauncher(LaunchResult& result) {
     const auto deadline = Clock::now() + kTimeout;
     while (true) {
-        pid_t waited = waitpid(result->launcher_pid, &result->status, WNOHANG);
-        if (waited == result->launcher_pid) {
+        pid_t waited = waitpid(result.launcher_pid, &result.status, WNOHANG);
+        if (waited == result.launcher_pid) {
             break;
         }
         if (waited < 0 && errno != EINTR) {
-            CheckCall(-1, "waitpid test launcher");
+            return CheckCall(-1, "waitpid test launcher");
         }
         if (Clock::now() >= deadline) {
-            result->timed_out = true;
-            kill(result->launcher_pid, SIGKILL);
-            while (waitpid(result->launcher_pid, &result->status, 0) < 0 &&
+            result.timed_out = true;
+            kill(result.launcher_pid, SIGKILL);
+            while (waitpid(result.launcher_pid, &result.status, 0) < 0 &&
                    errno == EINTR) {}
-            break;
+            return testing::AssertionFailure()
+                   << "detach did not return before the deadline";
         }
         // Retry reaping with a deadline, without assuming when exec completes.
         poll(nullptr, 0, 5);
     }
-    if (WIFEXITED(result->status)) {
-        result->exit_code = WEXITSTATUS(result->status);
+    if (WIFEXITED(result.status)) {
+        result.exit_code = WEXITSTATUS(result.status);
     }
+    return testing::AssertionSuccess();
 }
 
-void ParseReport(const std::string &text, LaunchResult *result) {
+void ParseReport(const std::string& text, LaunchResult& result) {
     std::istringstream lines(text);
     std::string line;
     while (std::getline(lines, line)) {
         if (line.rfind("PID: ", 0) == 0) {
-            std::istringstream(line.substr(5)) >> result->program_pid;
+            std::istringstream(line.substr(5)) >> result.program_pid;
         } else if (line.rfind("stdout: ", 0) == 0) {
-            result->stdout_path = line.substr(8);
+            result.stdout_path = line.substr(8);
         } else if (line.rfind("stderr: ", 0) == 0) {
-            result->stderr_path = line.substr(8);
+            result.stderr_path = line.substr(8);
         }
     }
 }
@@ -227,17 +235,18 @@ void Descriptor::Reset(int fd) {
     }
 }
 
-int CheckCall(int result, const char *operation) {
+testing::AssertionResult CheckCall(int result, const char* operation) {
     if (result < 0) {
-        throw std::system_error(errno, std::generic_category(), operation);
+        return testing::AssertionFailure() << operation << ": " << strerror(errno);
     }
-    return result;
+    return testing::AssertionSuccess();
 }
 
 std::string ReadFile(const std::string &path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) {
-        throw std::runtime_error("Cannot open " + path);
+        ADD_FAILURE() << "Cannot open " << path << ": " << strerror(errno);
+        return {};
     }
     std::string contents;
     char buffer[4096];
@@ -245,7 +254,7 @@ std::string ReadFile(const std::string &path) {
         contents.append(buffer, static_cast<size_t>(stream.gcount()));
     }
     if (stream.bad() || !stream.eof()) {
-        throw std::runtime_error("Cannot read " + path);
+        ADD_FAILURE() << "Cannot read " << path;
     }
     return contents;
 }
@@ -260,24 +269,24 @@ std::string ReadAvailable(int fd) {
         } else if (length == 0 || errno == EAGAIN || errno == EWOULDBLOCK) {
             return contents;
         } else if (errno != EINTR) {
-            CheckCall(-1, "read pipe");
+            ADD_FAILURE() << "read pipe: " << strerror(errno);
+            return contents;
         }
     }
 }
 
 void WriteFile(const std::string &path, const std::string &contents) {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(stream) << "Cannot open " << path;
     stream.write(contents.data(),
                  static_cast<std::streamsize>(contents.size()));
     stream.close();
-    if (!stream) {
-        throw std::runtime_error("Cannot write " + path);
-    }
+    ASSERT_TRUE(stream) << "Cannot write " << path;
 }
 
 mode_t FileMode(const std::string &path) {
-    struct stat status;
-    CheckCall(stat(path.c_str(), &status), "stat");
+    struct stat status = {};
+    EXPECT_TRUE(CheckCall(stat(path.c_str(), &status), "stat")) << path;
     return status.st_mode & 0777;
 }
 
@@ -288,26 +297,25 @@ void DetachTest::SetUp() {
     ASSERT_NE(created, nullptr) << strerror(errno);
     directory_ = created;
 
-    listener_.Reset(CheckCall(socket(AF_UNIX, SOCK_STREAM, 0), "socket"));
-    CheckCall(fcntl(listener_.Get(), F_SETFD, FD_CLOEXEC), "fcntl");
+    listener_.Reset(socket(AF_UNIX, SOCK_STREAM, 0));
+    ASSERT_TRUE(CheckCall(listener_.Get(), "socket"));
+    ASSERT_TRUE(CheckCall(fcntl(listener_.Get(), F_SETFD, FD_CLOEXEC), "fcntl"));
     struct sockaddr_un address = {};
     address.sun_family = AF_UNIX;
     const std::string path = SocketPath();
     ASSERT_LT(path.size(), sizeof(address.sun_path));
     std::copy(path.begin(), path.end(), address.sun_path);
     auto *socket_address = reinterpret_cast<struct sockaddr *>(&address);
-    CheckCall(bind(listener_.Get(), socket_address, sizeof(address)), "bind");
-    CheckCall(listen(listener_.Get(), 1), "listen");
+    ASSERT_TRUE(CheckCall(
+        bind(listener_.Get(), socket_address, sizeof(address)), "bind"));
+    ASSERT_TRUE(CheckCall(listen(listener_.Get(), 1), "listen"));
 }
 
 void DetachTest::TearDown() {
-    try {
-        StopProbe();
-    } catch (const std::exception &error) {
-        ADD_FAILURE() << error.what();
-        if (probe_pid_ > 0) {
-            kill(probe_pid_, SIGKILL);
-        }
+    const auto stopped = StopProbe();
+    EXPECT_TRUE(stopped);
+    if (!stopped && probe_pid_ > 0) {
+        kill(probe_pid_, SIGKILL);
     }
     peer_.Reset();
     listener_.Reset();
@@ -321,25 +329,34 @@ void DetachTest::TearDown() {
     }
 }
 
-void DetachTest::StopProbe() {
+testing::AssertionResult DetachTest::StopProbe() {
     if (probe_expected_ && peer_.Get() < 0) {
-        ReadProbe();
+        ProbeState state = {};
+        const auto reported = ReadProbeState(state);
+        if (!reported) {
+            return reported;
+        }
     }
-    if (peer_.Get() >= 0) {
-        // EOF releases the probe even when an assertion stopped the test.
-        // Drain until EOF to confirm it finished using the per-test files.
-        shutdown(peer_.Get(), SHUT_WR);
-        const auto deadline = Clock::now() + kTimeout;
-        char buffer[256];
-        while (true) {
-            WaitReadable(peer_.Get(), deadline);
-            ssize_t length = read(peer_.Get(), buffer, sizeof(buffer));
-            if (length == 0) {
-                break;
-            }
-            if (length < 0 && errno != EINTR) {
-                CheckCall(-1, "read probe during cleanup");
-            }
+    if (peer_.Get() < 0) {
+        return testing::AssertionSuccess();
+    }
+
+    // EOF releases the probe even when an assertion stopped the test.
+    // Drain until EOF to confirm it finished using the per-test files.
+    shutdown(peer_.Get(), SHUT_WR);
+    const auto deadline = Clock::now() + kTimeout;
+    char buffer[256];
+    while (true) {
+        const auto ready = WaitReadable(peer_.Get(), deadline);
+        if (!ready) {
+            return ready;
+        }
+        const ssize_t length = read(peer_.Get(), buffer, sizeof(buffer));
+        if (length == 0) {
+            return testing::AssertionSuccess();
+        }
+        if (length < 0 && errno != EINTR) {
+            return CheckCall(-1, "read probe during cleanup");
         }
     }
 }
@@ -370,11 +387,20 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
     std::string name = "launch-" + std::to_string(++launch_count_);
     const std::string report_path = Path(name + ".out");
     const std::string error_path = Path(name + ".err");
+    LaunchResult result;
     // Captures belong to the fixture and must not leak into the utility.
-    Descriptor report(CheckCall(open(report_path.c_str(),
-        O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600), "open report"));
-    Descriptor errors(CheckCall(open(error_path.c_str(),
-        O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600), "open diagnostics"));
+    Descriptor report(open(report_path.c_str(),
+        O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600));
+    EXPECT_TRUE(CheckCall(report.Get(), "open report"));
+    if (report.Get() < 0) {
+        return result;
+    }
+    Descriptor errors(open(error_path.c_str(),
+        O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600));
+    EXPECT_TRUE(CheckCall(errors.Get(), "open diagnostics"));
+    if (errors.Get() < 0) {
+        return result;
+    }
 
     // Own mutable argv storage before fork and keep it stable until exec.
     std::vector<std::string> command = {executable};
@@ -385,8 +411,11 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
     }
     argv.push_back(nullptr);
 
-    LaunchResult result;
-    result.launcher_pid = CheckCall(fork(), "fork test launcher");
+    result.launcher_pid = fork();
+    EXPECT_TRUE(CheckCall(result.launcher_pid, "fork test launcher"));
+    if (result.launcher_pid < 0) {
+        return result;
+    }
     if (result.launcher_pid == 0) {
         PrepareChild(options, report.Get(), errors.Get());
         if (chdir(directory_.c_str()) < 0) {
@@ -398,11 +427,11 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
         _exit(kLauncherFailure);
     }
 
-    WaitForLauncher(&result);
+    EXPECT_TRUE(WaitForLauncher(result));
     result.output = ReadFile(report_path);
     result.error = ReadFile(error_path);
-    ParseReport(result.output, &result);
-    ParseReport(result.error, &result);
+    ParseReport(result.output, result);
+    ParseReport(result.error, result);
     for (const auto &path : {result.stdout_path, result.stderr_path}) {
         if (path.rfind("/tmp/stdout.", 0) == 0 ||
             path.rfind("/tmp/stderr.", 0) == 0) {
@@ -428,15 +457,32 @@ LaunchResult DetachTest::RunProbe(
     return result;
 }
 
-ProbeState DetachTest::ReadProbe() {
+testing::AssertionResult DetachTest::ReadProbeState(ProbeState& state) {
     const auto deadline = Clock::now() + kTimeout;
-    WaitReadable(listener_.Get(), deadline);
-    peer_.Reset(CheckCall(accept(listener_.Get(), nullptr, nullptr), "accept"));
-
-    ProbeState state = {};
-    ReadExactly(peer_.Get(), &state, sizeof(state), deadline);
+    const auto ready = WaitReadable(listener_.Get(), deadline);
+    if (!ready) {
+        return ready;
+    }
+    int accepted;
+    do {
+        accepted = accept(listener_.Get(), nullptr, nullptr);
+    } while (accepted < 0 && errno == EINTR);
+    peer_.Reset(accepted);
+    if (accepted < 0) {
+        return CheckCall(-1, "accept probe");
+    }
+    const auto reported = ReadExactly(peer_.Get(), deadline, sizeof(state), &state);
+    if (!reported) {
+        return reported;
+    }
     probe_pid_ = static_cast<pid_t>(state.pid);
     probe_expected_ = true;
+    return testing::AssertionSuccess();
+}
+
+ProbeState DetachTest::ReadProbe() {
+    ProbeState state = {};
+    EXPECT_TRUE(ReadProbeState(state));
     return state;
 }
 
@@ -448,7 +494,7 @@ void DetachTest::PingProbe() {
     } while (sent < 0 && errno == EINTR);
     ASSERT_EQ(sent, 1) << strerror(errno);
     char reply = 0;
-    ReadExactly(peer_.Get(), &reply, 1, Clock::now() + kTimeout);
+    ASSERT_TRUE(ReadExactly(peer_.Get(), Clock::now() + kTimeout, 1, &reply));
     EXPECT_EQ(reply, ping);
 }
 
