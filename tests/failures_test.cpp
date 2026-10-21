@@ -170,6 +170,9 @@ const FaultCase kStartupFailures[] = {
     {"StdoutTruncate", {"ftruncate", Role::kLauncher, 1, EIO}, "stdout:"},
     {"StderrTruncate", {"ftruncate", Role::kLauncher, 2, EIO}, "stderr:"},
     {"PidTruncate", {"ftruncate", Role::kLauncher, 3, EIO}, "pid:"},
+    {"StdoutRewind", {"lseek", Role::kLauncher, 1, EIO}, "stdout:"},
+    {"StderrRewind", {"lseek", Role::kLauncher, 2, EIO}, "stderr:"},
+    {"PidRewind", {"lseek", Role::kLauncher, 3, EIO}, "pid:"},
     {"PidWrite", {"dprintf", Role::kLauncher, 1, EIO}, "pid:"},
     {"PidClose", {"close", Role::kLauncher, 3, EIO}, "pid:"},
     {"StartupSocket", {"socketpair", Role::kLauncher, 1, EIO},
@@ -247,8 +250,10 @@ TEST_P(DiagnosticFailureTest, StillReportsStartupFailureAndCleansUp) {
     ExpectTemporaryFilesRemoved();
 }
 
+// Without a PID file, the first two seeks reset stdout and stderr.
+// The third seeks back through the error log after the command fails.
 const FaultCase kDiagnosticFailures[] = {
-    {"SeekLog", {"lseek", Role::kLauncher, 1, EIO}, "stderr:"},
+    {"SeekLog", {"lseek", Role::kLauncher, 3, EIO}, "stderr:"},
     {"ReadLog", {"read", Role::kLauncher, 3, EIO}, "stderr:"},
     {"InterruptedLogRead", {"read", Role::kLauncher, 3, EINTR}, "exec:"},
     {"WriteDiagnostic", {"fwrite", Role::kLauncher, 1, EIO},

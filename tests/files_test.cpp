@@ -165,6 +165,42 @@ TEST_F(FilesTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
     EXPECT_EQ(state.extra_descriptors, 0);
 }
 
+class InheritedOutputTest : public DetachTest,
+                            public testing::WithParamInterface<const char *> {
+};
+
+TEST_P(InheritedOutputTest, WritesFromTheStartOfAReusedRegularFile) {
+    WriteFile(Path("reused"), "old contents\n");
+    Descriptor inherited(CheckCall(open(Path("reused").c_str(), O_WRONLY),
+                                    "open inherited output"));
+    ASSERT_GT(lseek(inherited.Get(), 0, SEEK_END), 0);
+
+    // macOS /dev/fd preserves this offset when opening the inherited handle.
+    // Truncating the file alone would leave a gap before the new contents.
+    const std::string option = GetParam();
+    const auto result = RunProbe({option,
+        "/dev/fd/" + std::to_string(inherited.Get())}, "streams");
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    const auto state = ReadProbe();
+    std::string expected = std::to_string(state.pid) + "\n";
+    if (option == "--stdout") {
+        expected = "stdout one\nstdout two\n";
+    } else if (option == "--stderr") {
+        expected = "stderr one\nstderr two\n";
+    }
+    EXPECT_EQ(ReadFile(Path("reused")), expected);
+    EXPECT_EQ(state.extra_descriptors, 0);
+}
+
+std::string OutputOptionName(const testing::TestParamInfo<const char *> &info) {
+    return info.param + 2;
+}
+
+INSTANTIATE_TEST_SUITE_P(InheritedFiles, InheritedOutputTest,
+                         testing::Values("--stdout", "--stderr", "--pid"),
+                         OutputOptionName);
+
 TEST_F(FilesTest, MissingStdinFailsBeforeStartingTheCommand) {
     const auto result = RunProbe({"--stdin", Path("missing")});
 

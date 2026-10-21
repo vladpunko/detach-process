@@ -170,11 +170,30 @@ static int close_inherited_descriptors(int startup_fd) {
     return TRUE;
 }
 
+static int reset_regular_file(int fd, const struct stat *file_stat,
+                              const char *label) {
+    // Pipes and devices must remain usable without truncation or seeking.
+    if (!S_ISREG(file_stat->st_mode)) {
+        return TRUE;
+    }
+    if (ftruncate(fd, 0) < 0) {
+        perror(label);
+
+        return FALSE;
+    }
+    // Truncation keeps the offset. On macOS, /dev/fd can inherit a nonzero one.
+    // Rewind explicitly so new output cannot start with a hole of zero bytes.
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        perror(label);
+
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static int save_pid_file(int fd, pid_t pid, const struct stat *file_stat) {
     // Reuse the checked descriptor instead of reopening its path.
-    if (S_ISREG(file_stat->st_mode) && ftruncate(fd, 0) < 0) {
-        perror("pid");
-
+    if (!reset_regular_file(fd, file_stat, "pid")) {
         return FALSE;
     }
     if (dprintf(fd, "%jd\n", (intmax_t)pid) < 0) {
@@ -538,16 +557,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Truncate regular output files only after checking for PID conflicts.
-    // Devices and pipes do not need truncation.
-    if (S_ISREG(stdout_stat.st_mode) && ftruncate(fd_stdout, 0) < 0) {
-        perror("stdout");
-
+    // Reset outputs only after all file identities have been checked.
+    if (!reset_regular_file(fd_stdout, &stdout_stat, "stdout")) {
         goto startup_failed;
     }
-    if (S_ISREG(stderr_stat.st_mode) && ftruncate(fd_stderr, 0) < 0) {
-        perror("stderr");
-
+    if (!reset_regular_file(fd_stderr, &stderr_stat, "stderr")) {
         goto startup_failed;
     }
 
