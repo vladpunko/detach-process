@@ -3,8 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#ifndef DETACH_PROCESS_TESTS_TEST_SUPPORT_H_
-#define DETACH_PROCESS_TESTS_TEST_SUPPORT_H_
+#ifndef TESTS_TEST_SUPPORT_H_
+#define TESTS_TEST_SUPPORT_H_
 
 #include <set>
 #include <string>
@@ -65,4 +65,4 @@ class DetachTest : public testing::Test {
 
 }  // namespace detach_test
 
-#endif  // DETACH_PROCESS_TESTS_TEST_SUPPORT_H_
+#endif  // TESTS_TEST_SUPPORT_H_

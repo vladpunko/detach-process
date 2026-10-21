@@ -3,8 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#ifndef DETACH_PROCESS_TESTS_TEST_LAUNCHER_H_
-#define DETACH_PROCESS_TESTS_TEST_LAUNCHER_H_
+#ifndef TESTS_TEST_LAUNCHER_H_
+#define TESTS_TEST_LAUNCHER_H_
 
 #include <sys/resource.h>
 #include <sys/types.h>
@@ -60,4 +60,4 @@ LaunchResult RunDetach(const std::vector<std::string>& arguments,
 
 }  // namespace detach_test
 
-#endif  // DETACH_PROCESS_TESTS_TEST_LAUNCHER_H_
+#endif  // TESTS_TEST_LAUNCHER_H_

@@ -3,8 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#ifndef DETACH_PROCESS_TESTS_PROBE_STATE_H_
-#define DETACH_PROCESS_TESTS_PROBE_STATE_H_
+#ifndef TESTS_PROBE_STATE_H_
+#define TESTS_PROBE_STATE_H_
 
 #include <stdint.h>
 
@@ -32,4 +32,4 @@ typedef struct ProbeState {
   int64_t pid_file;
 } ProbeState;
 
-#endif  // DETACH_PROCESS_TESTS_PROBE_STATE_H_
+#endif  // TESTS_PROBE_STATE_H_

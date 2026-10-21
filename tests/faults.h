@@ -3,8 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#ifndef DETACH_PROCESS_TESTS_FAULTS_H_
-#define DETACH_PROCESS_TESTS_FAULTS_H_
+#ifndef TESTS_FAULTS_H_
+#define TESTS_FAULTS_H_
 
 // Positive values are errno codes. These values simulate other call results.
 enum fault_result {
@@ -15,4 +15,4 @@ enum fault_result {
   FAULT_DIRECTORY_ENTRY = -4,
 };
 
-#endif  // DETACH_PROCESS_TESTS_FAULTS_H_
+#endif  // TESTS_FAULTS_H_

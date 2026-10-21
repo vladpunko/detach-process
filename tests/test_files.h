@@ -3,8 +3,8 @@
 // Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 // Created date: 2026-10-21
 
-#ifndef DETACH_PROCESS_TESTS_TEST_FILES_H_
-#define DETACH_PROCESS_TESTS_TEST_FILES_H_
+#ifndef TESTS_TEST_FILES_H_
+#define TESTS_TEST_FILES_H_
 
 #include <sys/types.h>
 
@@ -47,4 +47,4 @@ mode_t FileMode(const std::string& path);
 
 }  // namespace detach_test
 
-#endif  // DETACH_PROCESS_TESTS_TEST_FILES_H_
+#endif  // TESTS_TEST_FILES_H_
