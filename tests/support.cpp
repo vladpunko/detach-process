@@ -35,6 +35,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr auto kTimeout = std::chrono::seconds(5);
+// Separate fixture setup failures from exit codes returned by detach itself.
+constexpr int kLauncherFailure = 125;
 
 void WaitReadable(int fd, Clock::time_point deadline) {
     while (Clock::now() < deadline) {
@@ -85,7 +87,7 @@ void ReadExactly(int fd, void *buffer, size_t remaining,
 void RequireChildCall(int result, const char *operation) {
     if (result < 0) {
         perror(operation);
-        _exit(125);
+        _exit(kLauncherFailure);
     }
 }
 
@@ -165,6 +167,33 @@ void PrepareChild(const LaunchOptions &options, int report_fd, int error_fd) {
         if (options.closed_standard_descriptors & (1 << fd)) {
             close(fd);
         }
+    }
+}
+
+// Reap our direct child before reading its report, with a bound on hangs.
+// The detached probe has a different parent and is released through its socket.
+void WaitForLauncher(LaunchResult *result) {
+    const auto deadline = Clock::now() + kTimeout;
+    while (true) {
+        pid_t waited = waitpid(result->launcher_pid, &result->status, WNOHANG);
+        if (waited == result->launcher_pid) {
+            break;
+        }
+        if (waited < 0 && errno != EINTR) {
+            CheckCall(-1, "waitpid test launcher");
+        }
+        if (Clock::now() >= deadline) {
+            result->timed_out = true;
+            kill(result->launcher_pid, SIGKILL);
+            while (waitpid(result->launcher_pid, &result->status, 0) < 0 &&
+                   errno == EINTR) {}
+            break;
+        }
+        // Retry reaping with a deadline, without assuming when exec completes.
+        poll(nullptr, 0, 5);
+    }
+    if (WIFEXITED(result->status)) {
+        result->exit_code = WEXITSTATUS(result->status);
     }
 }
 
@@ -273,25 +302,7 @@ void DetachTest::SetUp() {
 
 void DetachTest::TearDown() {
     try {
-        if (probe_expected_ && peer_.Get() < 0) {
-            ReadProbe();
-        }
-        if (peer_.Get() >= 0) {
-            // EOF releases the probe even when an assertion stopped the test.
-            shutdown(peer_.Get(), SHUT_WR);
-            const auto deadline = Clock::now() + kTimeout;
-            char buffer[256];
-            while (true) {
-                WaitReadable(peer_.Get(), deadline);
-                ssize_t length = read(peer_.Get(), buffer, sizeof(buffer));
-                if (length == 0) {
-                    break;
-                }
-                if (length < 0 && errno != EINTR) {
-                    CheckCall(-1, "read probe during cleanup");
-                }
-            }
-        }
+        StopProbe();
     } catch (const std::exception &error) {
         ADD_FAILURE() << error.what();
         if (probe_pid_ > 0) {
@@ -307,6 +318,29 @@ void DetachTest::TearDown() {
         std::error_code error;
         std::filesystem::remove_all(directory_, error);
         EXPECT_FALSE(error) << error.message();
+    }
+}
+
+void DetachTest::StopProbe() {
+    if (probe_expected_ && peer_.Get() < 0) {
+        ReadProbe();
+    }
+    if (peer_.Get() >= 0) {
+        // EOF releases the probe even when an assertion stopped the test.
+        // Drain until EOF to confirm it finished using the per-test files.
+        shutdown(peer_.Get(), SHUT_WR);
+        const auto deadline = Clock::now() + kTimeout;
+        char buffer[256];
+        while (true) {
+            WaitReadable(peer_.Get(), deadline);
+            ssize_t length = read(peer_.Get(), buffer, sizeof(buffer));
+            if (length == 0) {
+                break;
+            }
+            if (length < 0 && errno != EINTR) {
+                CheckCall(-1, "read probe during cleanup");
+            }
+        }
     }
 }
 
@@ -336,11 +370,13 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
     std::string name = "launch-" + std::to_string(++launch_count_);
     const std::string report_path = Path(name + ".out");
     const std::string error_path = Path(name + ".err");
+    // Captures belong to the fixture and must not leak into the utility.
     Descriptor report(CheckCall(open(report_path.c_str(),
         O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600), "open report"));
     Descriptor errors(CheckCall(open(error_path.c_str(),
         O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600), "open diagnostics"));
 
+    // Own mutable argv storage before fork and keep it stable until exec.
     std::vector<std::string> command = {executable};
     command.insert(command.end(), arguments.begin(), arguments.end());
     std::vector<char *> argv;
@@ -355,35 +391,14 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
         PrepareChild(options, report.Get(), errors.Get());
         if (chdir(directory_.c_str()) < 0) {
             perror("test working directory");
-            _exit(125);
+            _exit(kLauncherFailure);
         }
         execv(executable.c_str(), argv.data());
         perror("exec detach");
-        _exit(125);
+        _exit(kLauncherFailure);
     }
 
-    const auto deadline = Clock::now() + kTimeout;
-    while (true) {
-        pid_t waited = waitpid(result.launcher_pid, &result.status, WNOHANG);
-        if (waited == result.launcher_pid) {
-            break;
-        }
-        if (waited < 0 && errno != EINTR) {
-            CheckCall(-1, "waitpid test launcher");
-        }
-        if (Clock::now() >= deadline) {
-            result.timed_out = true;
-            kill(result.launcher_pid, SIGKILL);
-            while (waitpid(result.launcher_pid, &result.status, 0) < 0 &&
-                   errno == EINTR) {}
-            break;
-        }
-        // Retry reaping with a deadline, without assuming when exec completes.
-        poll(nullptr, 0, 5);
-    }
-    if (WIFEXITED(result.status)) {
-        result.exit_code = WEXITSTATUS(result.status);
-    }
+    WaitForLauncher(&result);
     result.output = ReadFile(report_path);
     result.error = ReadFile(error_path);
     ParseReport(result.output, &result);
@@ -396,7 +411,7 @@ LaunchResult DetachTest::Run(const std::vector<std::string> &arguments,
     }
     EXPECT_FALSE(result.timed_out)
         << "detach did not return before the deadline";
-    EXPECT_NE(result.exit_code, 125) << result.error;
+    EXPECT_NE(result.exit_code, kLauncherFailure) << result.error;
     return result;
 }
 

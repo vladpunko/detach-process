@@ -33,13 +33,15 @@ class Descriptor {
     int fd_;
 };
 
+// Apply caller state in a forked launcher so tests never alter their runner.
 struct LaunchOptions {
     std::string executable;
     std::map<std::string, std::string> environment;
     std::string terminal;
     rlim_t descriptor_limit = 0;
+    // Bit n closes descriptor n after all other launcher setup is complete.
     int closed_standard_descriptors = 0;
-    int file_creation_mask = -1;
+    int file_creation_mask = -1;  // Negative keeps the runner's current umask.
     std::vector<int> broken_pipes;
     std::vector<int> ignored_signals;
     std::vector<int> blocked_signals;
@@ -86,11 +88,15 @@ class DetachTest : public testing::Test {
     void PingProbe();
 
  private:
+    void StopProbe();
+
     std::string directory_;
+    // Accept one report, then use the peer for liveness checks and shutdown.
     Descriptor listener_;
     Descriptor peer_;
     std::set<std::string> temporary_logs_;
     pid_t probe_pid_ = -1;
+    // A successful report still needs cleanup if an assertion skipped accept.
     bool probe_expected_ = false;
     unsigned int launch_count_ = 0;
 };

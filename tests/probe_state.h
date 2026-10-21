@@ -16,6 +16,7 @@ typedef struct ProbeState {
     int64_t session_id;
     int64_t process_group;
     int64_t has_terminal;
+    // Standard streams and the control socket are excluded from this count.
     int64_t extra_descriptors;
     int64_t stdin_is_null;
     int64_t sigpipe_ignored;
@@ -24,6 +25,7 @@ typedef struct ProbeState {
     int64_t sigpipe_blocked;
     int64_t sigusr1_blocked;
     int64_t creation_mask;
+    // These two fields are -1 unless their respective probe mode is selected.
     int64_t descriptor_open;
     int64_t pid_file;
 } ProbeState;

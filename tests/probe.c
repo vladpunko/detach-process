@@ -106,6 +106,7 @@ static int signal_ignored(int signal) {
     return action.sa_handler == SIG_IGN;
 }
 
+// Complete the requested I/O before sending state to synchronize assertions.
 static int run_mode(int argc, char *argv[]) {
     const char *mode = argv[1];
     if (strcmp(mode, "stdio") == 0) {
@@ -183,6 +184,7 @@ static int capture_state(int channel, int argc, char *argv[],
     if (sigprocmask(SIG_BLOCK, NULL, &mask) < 0) {
         return 0;
     }
+    // Reading umask requires changing it briefly, then restoring it.
     mode_t creation_mask = umask(0);
     umask(creation_mask);
 
@@ -262,6 +264,7 @@ int main(int argc, char *argv[]) {
     if (channel < 0) {
         return EXIT_FAILURE;
     }
+    // The socket is the readiness barrier, then remains open for liveness.
     ProbeState state = {0};
     int success = capture_state(channel, argc, argv, &state) &&
                   write_all(channel, &state, sizeof(state)) &&

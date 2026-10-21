@@ -5,6 +5,7 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -258,8 +259,16 @@ TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
     EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.pid) + "\n");
 }
 
+std::string ClosedDescriptorName(const testing::TestParamInfo<int> &info) {
+    const char *names[] = {
+        "None", "Stdin", "Stdout", "StdinStdout", "Stderr", "StdinStderr",
+        "StdoutStderr", "StdinStdoutStderr",
+    };
+    return names[info.param];
+}
+
 INSTANTIATE_TEST_SUITE_P(StandardStreams, ClosedStandardDescriptorsTest,
-                         testing::Range(1, 8));
+                         testing::Range(1, 8), ClosedDescriptorName);
 
 class TerminalTest : public DetachTest {
  protected:

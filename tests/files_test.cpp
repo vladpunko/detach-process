@@ -341,8 +341,8 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
     WriteFile(Path("input"), "keep stdin\n");
     WriteFile(Path("output"), "keep stdout\n");
     WriteFile(Path("errors"), "keep stderr\n");
-    const auto kind = std::get<1>(GetParam());
-    const std::string target = Path(std::get<0>(GetParam()));
+    const auto &[file, kind] = GetParam();
+    const std::string target = Path(file);
     const auto pid = CreateAlias(kind, target, Path("pid"));
     const auto result = RunProbe({"--stdin", Path("input"),
                                   "--stdout", Path("output"),
@@ -357,8 +357,8 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
 
 std::string PidAliasName(
         const testing::TestParamInfo<PidAliasTest::ParamType> &info) {
-    return std::string(std::get<0>(info.param)) + "_" +
-           AliasName(std::get<1>(info.param));
+    const auto &[file, kind] = info.param;
+    return std::string(file) + "_" + AliasName(kind);
 }
 
 INSTANTIATE_TEST_SUITE_P(
