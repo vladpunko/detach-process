@@ -40,26 +40,10 @@ jobs:
         run: ctest --test-dir build --output-on-failure --parallel 2
 
       # Instrument only the fault executable after checking the production binary.
-      - name: Step -- 6.
+      - name: Configure coverage
         if: runner.os == 'macOS'
-        run: |
-          cmake -S . -B build -DENABLE_COVERAGE=ON
-          cmake --build build --target detach_faults --parallel 2
+        run: cmake -S . -B build -DENABLE_COVERAGE=ON
 
-      - name: Step -- 7.
+      - name: Check full coverage
         if: runner.os == 'macOS'
-        env:
-          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/coverage-profiles/%m-%p.profraw
-          DETACH_TEST_EXECUTABLE: ${{ github.workspace }}/build/tests/detach_faults
-        run: |
-          cmake -E remove_directory build/coverage-profiles
-          mkdir -p build/coverage-profiles
-          ctest --test-dir build --output-on-failure --parallel 2
-
-      - name: Step -- 8.
-        if: runner.os == 'macOS'
-        run: |
-          xcrun llvm-profdata merge -sparse build/coverage-profiles/*.profraw -o build/coverage.profdata
-          xcrun llvm-cov report build/tests/detach_faults -instr-profile=build/coverage.profdata detach.c
-          xcrun llvm-cov export build/tests/detach_faults -instr-profile=build/coverage.profdata -format=lcov detach.c > build/coverage.lcov
-          cmake -DREPORT=build/coverage.lcov -P tests/check_coverage.cmake
+        run: cmake --build build --target coverage --parallel 2
