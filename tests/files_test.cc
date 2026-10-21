@@ -7,8 +7,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <initializer_list>
 #include <string>
-#include <tuple>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -279,6 +279,12 @@ TEST_F(FilesTest, PidCannotAliasTheDefaultDevNullInput) {
 
 enum class AliasKind { kSamePath, kHardLink, kSymbolicLink };
 
+constexpr AliasKind kAliasKinds[] = {
+    AliasKind::kSamePath,
+    AliasKind::kHardLink,
+    AliasKind::kSymbolicLink,
+};
+
 std::string AliasName(AliasKind kind) {
   switch (kind) {
     case AliasKind::kSamePath:
@@ -325,23 +331,34 @@ std::string SharedOutputName(const testing::TestParamInfo<AliasKind>& info) {
 }
 
 INSTANTIATE_TEST_SUITE_P(OutputAliases, SharedOutputTest,
-                         testing::Values(AliasKind::kSamePath,
-                                         AliasKind::kHardLink,
-                                         AliasKind::kSymbolicLink),
-                         SharedOutputName);
+                         testing::ValuesIn(kAliasKinds), SharedOutputName);
 
-class PidAliasTest
-    : public DetachTest,
-      public testing::WithParamInterface<std::tuple<const char*, AliasKind>> {
+struct PidAliasCase {
+  std::string file;
+  AliasKind kind;
+};
+
+std::vector<PidAliasCase> MakePidAliasCases() {
+  std::vector<PidAliasCase> cases;
+  for (const char* file : {"input", "output", "errors"}) {
+    for (AliasKind kind : kAliasKinds) {
+      cases.push_back({file, kind});
+    }
+  }
+  return cases;
+}
+
+class PidAliasTest : public DetachTest,
+                     public testing::WithParamInterface<PidAliasCase> {
 };
 
 TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
   WriteFile(Path("input"), "keep stdin\n");
   WriteFile(Path("output"), "keep stdout\n");
   WriteFile(Path("errors"), "keep stderr\n");
-  const auto& [file, kind] = GetParam();
-  const std::string target = Path(file);
-  const auto pid = CreateAlias(kind, target, Path("pid"));
+  const PidAliasCase& test_case = GetParam();
+  const auto pid =
+      CreateAlias(test_case.kind, Path(test_case.file), Path("pid"));
   const auto result =
       RunProbe({"--stdin", Path("input"), "--stdout", Path("output"),
                 "--stderr", Path("errors"), "--pid", pid});
@@ -355,35 +372,47 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
 
 std::string PidAliasName(
     const testing::TestParamInfo<PidAliasTest::ParamType>& info) {
-  const auto& [file, kind] = info.param;
-  return std::string(file) + "_" + AliasName(kind);
+  return info.param.file + "_" + AliasName(info.param.kind);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    PidAliases, PidAliasTest,
-    testing::Combine(testing::Values("input", "output", "errors"),
-                     testing::Values(AliasKind::kSamePath, AliasKind::kHardLink,
-                                     AliasKind::kSymbolicLink)),
-    PidAliasName);
+INSTANTIATE_TEST_SUITE_P(PidAliases, PidAliasTest,
+                         testing::ValuesIn(MakePidAliasCases()), PidAliasName);
+
+struct InputAliasCase {
+  std::string stream;
+  AliasKind kind;
+  bool write_pid;
+};
+
+// Alias checks must protect input with and without the optional PID file.
+std::vector<InputAliasCase> MakeInputAliasCases() {
+  std::vector<InputAliasCase> cases;
+  for (const char* stream : {"--stdout", "--stderr"}) {
+    for (AliasKind kind : kAliasKinds) {
+      for (bool write_pid : {false, true}) {
+        cases.push_back({stream, kind, write_pid});
+      }
+    }
+  }
+  return cases;
+}
 
 class InputAliasTest : public DetachTest,
-                       public testing::WithParamInterface<
-                           std::tuple<const char*, AliasKind, bool>> {
+                       public testing::WithParamInterface<InputAliasCase> {
 };
 
 TEST_P(InputAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
-  const auto& [option, kind, write_pid] = GetParam();
+  const InputAliasCase& test_case = GetParam();
   WriteFile(Path("input"), "keep stdin\n");
   WriteFile(Path("output"), "keep stdout\n");
   WriteFile(Path("errors"), "keep stderr\n");
   WriteFile(Path("pid"), "keep pid\n");
-  const auto alias = CreateAlias(kind, Path("input"), Path("alias"));
-  const std::string stream = option;
-  const auto output = stream == "--stdout" ? alias : Path("output");
-  const auto errors = stream == "--stderr" ? alias : Path("errors");
+  const auto alias = CreateAlias(test_case.kind, Path("input"), Path("alias"));
+  const auto output = test_case.stream == "--stdout" ? alias : Path("output");
+  const auto errors = test_case.stream == "--stderr" ? alias : Path("errors");
   std::vector<std::string> options = {"--stdin", Path("input"), "--stdout",
                                       output,    "--stderr",    errors};
-  if (write_pid) {
+  if (test_case.write_pid) {
     options.insert(options.end(), {"--pid", Path("pid")});
   }
 
@@ -400,18 +429,14 @@ TEST_P(InputAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
 
 std::string InputAliasName(
     const testing::TestParamInfo<InputAliasTest::ParamType>& info) {
-  const auto& [option, kind, write_pid] = info.param;
-  return std::string(option + 2) + "_" + AliasName(kind) +
-         (write_pid ? "_WithPid" : "_WithoutPid");
+  const InputAliasCase& test_case = info.param;
+  return test_case.stream.substr(2) + "_" + AliasName(test_case.kind) +
+         (test_case.write_pid ? "_WithPid" : "_WithoutPid");
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    InputAliases, InputAliasTest,
-    testing::Combine(testing::Values("--stdout", "--stderr"),
-                     testing::Values(AliasKind::kSamePath, AliasKind::kHardLink,
-                                     AliasKind::kSymbolicLink),
-                     testing::Bool()),
-    InputAliasName);
+INSTANTIATE_TEST_SUITE_P(InputAliases, InputAliasTest,
+                         testing::ValuesIn(MakeInputAliasCases()),
+                         InputAliasName);
 
 class InvalidOutputTest : public DetachTest,
                           public testing::WithParamInterface<const char*> {
