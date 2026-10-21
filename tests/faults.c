@@ -52,6 +52,26 @@ static enum process_role current_role = LAUNCHER;
 static struct fault_rule rules[8];
 static size_t rule_count;
 
+// Record actual injections separately from the plan. A successful retry test
+// must prove that its selected failure happened, not just that detach worked.
+static void record_fault(const struct fault_rule* rule) {
+  const char* path = getenv("DETACH_TEST_APPLIED_FAULTS");
+  if (path == NULL) {
+    return;
+  }
+  // These are real calls, declared before the wrapper macros below. Appending
+  // one short record keeps reports from the different startup roles together.
+  int saved_error = errno;
+  int fd = open(path, O_WRONLY | O_APPEND);
+  if (fd < 0 ||
+      dprintf(fd, "%s:%s:%u:%d\n", rule->role, rule->operation,
+              rule->occurrence, rule->error) < 0 ||
+      close(fd) < 0) {
+    _exit(125);
+  }
+  errno = saved_error;
+}
+
 static void initialize_faults(void) {
   const char* plan = getenv("DETACH_TEST_FAULTS");
   if (plan == NULL) {
@@ -96,8 +116,11 @@ static const struct fault_rule* find_fault(const char* operation) {
       }
     }
   }
-  if (matched != NULL && matched->error > 0) {
-    errno = matched->error;
+  if (matched != NULL) {
+    record_fault(matched);
+    if (matched->error > 0) {
+      errno = matched->error;
+    }
   }
   return matched;
 }

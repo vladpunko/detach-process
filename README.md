@@ -117,7 +117,7 @@ A state check starts with `RunProbe()`, then calls `ReadProbe()` before inspecti
 
 `tests/probe.c` reports the detached command's state over a local socket and stays alive until the test releases it. This lets tests verify that `detach` returns while the command is still running. Terminal tests use a real pseudoterminal and check that closing it leaves the detached command responsive. Each test has its own temporary directory, bounded waits, and cleanup for reported temporary logs.
 
-`tests/faults.c` compiles the unchanged utility into a separate test executable with controlled system calls. Rules select the process, operation, call number, and result. These checks exercise failures that are difficult to reproduce reliably through OS resource limits. The production executable uses the original system calls.
+`tests/faults.c` compiles the unchanged utility into a separate test executable with controlled system calls. Rules select the process, operation, call number, and result. Each test checks that every planned injection actually occurred, including its occurrence count. These checks exercise failures that are difficult to reproduce reliably through OS resource limits. The production executable uses the original system calls.
 
 Tests are disabled by default. Building the standalone utility does not require C++, GoogleTest, or a network connection.
 

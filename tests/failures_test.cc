@@ -7,7 +7,9 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <fstream>
 #include <initializer_list>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -62,13 +64,31 @@ class FaultTest : public DetachTest {
     if (!HasFatalFailure()) {
       WriteFile(Path("events"), "");
       events_ready_ = !HasFatalFailure();
+      WriteFile(Path("applied-faults"), "");
+      faults_ready_ = !HasFatalFailure();
     }
   }
 
   void TearDown() override {
     const auto paths = TemporaryFiles();
+    // Keep the file open while base cleanup stops the probe and removes its
+    // directory. Read afterwards so even the last child injection is included.
+    std::ifstream applied;
+    if (faults_ready_) {
+      applied.open(Path("applied-faults"));
+      EXPECT_TRUE(applied.is_open()) << "Open applied fault log";
+    }
     // A broken event log must not prevent releasing the probe and sockets.
     DetachTest::TearDown();
+    if (applied.is_open()) {
+      std::multiset<std::string> actual;
+      std::string rule;
+      while (std::getline(applied, rule)) {
+        actual.insert(rule);
+      }
+      EXPECT_TRUE(applied.eof() && !applied.bad()) << "Read applied fault log";
+      EXPECT_EQ(actual, expected_faults_) << "Every planned fault must fire";
+    }
     // Also clean files from intentionally failed unlink calls.
     for (const auto& path : paths) {
       if (unlink(path.c_str()) < 0) {
@@ -81,24 +101,28 @@ class FaultTest : public DetachTest {
     LaunchOptions options;
     options.executable = FAULT_PATH;
     options.environment["DETACH_TEST_EVENTS"] = Path("events");
+    options.environment["DETACH_TEST_APPLIED_FAULTS"] = Path("applied-faults");
     return options;
   }
 
-  LaunchOptions Inject(std::initializer_list<FaultRule> rules) const {
+  LaunchOptions Inject(std::initializer_list<FaultRule> rules) {
     auto options = FaultOptions();
     std::string plan;
     for (const auto& rule : rules) {
       if (!plan.empty()) {
         plan += ";";
       }
-      plan += std::string(RoleName(rule.role)) + ":" + rule.operation + ":" +
-              std::to_string(rule.call) + ":" + std::to_string(rule.error);
+      const std::string entry =
+          std::string(RoleName(rule.role)) + ":" + rule.operation + ":" +
+          std::to_string(rule.call) + ":" + std::to_string(rule.error);
+      plan += entry;
+      expected_faults_.insert(entry);
     }
     options.environment["DETACH_TEST_FAULTS"] = plan;
     return options;
   }
 
-  LaunchOptions Inject(const FaultRule& rule) const { return Inject({rule}); }
+  LaunchOptions Inject(const FaultRule& rule) { return Inject({rule}); }
 
   std::vector<std::string> TemporaryFiles() const {
     std::vector<std::string> paths;
@@ -121,6 +145,9 @@ class FaultTest : public DetachTest {
 
  private:
   bool events_ready_ = false;
+  bool faults_ready_ = false;
+  // Compare counts as well as contents. Process scheduling may reorder rules.
+  std::multiset<std::string> expected_faults_;
 };
 
 class StartupFailureTest : public FaultTest,
