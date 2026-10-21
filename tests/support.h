@@ -9,13 +9,13 @@
 #include <sys/resource.h>
 #include <sys/types.h>
 
-#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "tests/probe_state.h"
 
 namespace detach_test {
 
@@ -84,7 +84,7 @@ class DetachTest : public testing::Test {
                           const LaunchOptions &launch_options = {});
 
     // The probe reports only after its output is flushed, then waits for us.
-    std::map<std::string, int64_t> ReadProbe();
+    ProbeState ReadProbe();
     void PingProbe();
 
  private:

@@ -24,13 +24,13 @@ TEST_F(ProcessTest, CommandRunsInANewSessionWithoutBeingItsLeader) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("pid"), result.program_pid);
-    EXPECT_NE(state.at("ppid"), result.launcher_pid);
-    EXPECT_NE(state.at("ppid"), getpid());
-    EXPECT_NE(state.at("sid"), getsid(0));
-    EXPECT_NE(state.at("sid"), state.at("pid"));
-    EXPECT_EQ(state.at("pgrp"), state.at("sid"));
-    EXPECT_EQ(state.at("terminal"), 0);
+    EXPECT_EQ(state.pid, result.program_pid);
+    EXPECT_NE(state.parent_pid, result.launcher_pid);
+    EXPECT_NE(state.parent_pid, getpid());
+    EXPECT_NE(state.session_id, getsid(0));
+    EXPECT_NE(state.session_id, state.pid);
+    EXPECT_EQ(state.process_group, state.session_id);
+    EXPECT_EQ(state.has_terminal, 0);
 }
 
 TEST_F(ProcessTest, LauncherReturnsWhileTheCommandIsStillRunning) {
@@ -64,7 +64,7 @@ TEST_F(ProcessTest, LooksUpTheCommandInPath) {
                              options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
 }
 
 TEST_F(ProcessTest, MissingCommandInPathIsAnExecFailure) {
@@ -104,14 +104,14 @@ TEST_F(ProcessTest, PreservesTheFileCreationMask) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("umask"), 0027);
+    EXPECT_EQ(ReadProbe().creation_mask, 0027);
 }
 
 TEST_F(ProcessTest, ClosesInternalDescriptorsBeforeExec) {
     const auto result = RunProbe({"--pid", Path("pid")});
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+    EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 
 TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
@@ -120,7 +120,7 @@ TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
     const auto result = RunProbe({}, "state");
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+    EXPECT_EQ(ReadProbe().extra_descriptors, 0);
     EXPECT_GE(fcntl(inherited.Get(), F_GETFD), 0);
 }
 
@@ -135,8 +135,8 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("fd_open"), 0);
-    EXPECT_EQ(state.at("extra_descriptors"), 0);
+    EXPECT_EQ(state.descriptor_open, 0);
+    EXPECT_EQ(state.extra_descriptors, 0);
     EXPECT_GE(fcntl(inherited.Get(), F_GETFD), 0);
 }
 
@@ -144,7 +144,7 @@ TEST_F(ProcessTest, KeepsTheCallersDefaultSigpipeDisposition) {
     const auto result = RunProbe();
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sigpipe_ignored"), 0);
+    EXPECT_EQ(ReadProbe().sigpipe_ignored, 0);
 }
 
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
@@ -153,7 +153,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sigpipe_ignored"), 1);
+    EXPECT_EQ(ReadProbe().sigpipe_ignored, 1);
 }
 
 TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
@@ -162,7 +162,7 @@ TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sigpipe_blocked"), 1);
+    EXPECT_EQ(ReadProbe().sigpipe_blocked, 1);
 }
 
 TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
@@ -171,7 +171,7 @@ TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sigusr1_blocked"), 1);
+    EXPECT_EQ(ReadProbe().sigusr1_blocked, 1);
 }
 
 TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
@@ -180,7 +180,7 @@ TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sigchld_ignored"), 1);
+    EXPECT_EQ(ReadProbe().sigchld_ignored, 1);
 }
 
 TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
@@ -189,7 +189,7 @@ TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("sighup_ignored"), 1);
+    EXPECT_EQ(ReadProbe().sighup_ignored, 1);
 }
 
 TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
@@ -201,8 +201,8 @@ TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
     EXPECT_NE(result.error.find("The command may already be running"),
               std::string::npos);
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("pid"), result.program_pid);
-    EXPECT_EQ(state.at("sigpipe_ignored"), 0);
+    EXPECT_EQ(state.pid, result.program_pid);
+    EXPECT_EQ(state.sigpipe_ignored, 0);
     EXPECT_EQ(ReadFile(result.stdout_path), "stdout one\nstdout two\n");
     PingProbe();
 }
@@ -251,11 +251,11 @@ TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("stdin_is_null"), 1);
-    EXPECT_EQ(state.at("extra_descriptors"), 0);
+    EXPECT_EQ(state.stdin_is_null, 1);
+    EXPECT_EQ(state.extra_descriptors, 0);
     EXPECT_TRUE(ReadFile(Path("output")).empty());
     EXPECT_EQ(ReadFile(Path("errors")), "probe stderr\n");
-    EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.at("pid")) + "\n");
+    EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.pid) + "\n");
 }
 
 INSTANTIATE_TEST_SUITE_P(StandardStreams, ClosedStandardDescriptorsTest,
@@ -289,9 +289,9 @@ TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("terminal"), 0);
-    EXPECT_NE(state.at("sid"), result.launcher_pid);
-    EXPECT_EQ(state.at("sighup_ignored"), 0);
+    EXPECT_EQ(state.has_terminal, 0);
+    EXPECT_NE(state.session_id, result.launcher_pid);
+    EXPECT_EQ(state.sighup_ignored, 0);
 }
 
 TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
@@ -310,7 +310,7 @@ TEST_F(TerminalTest, OpeningATerminalDoesNotMakeItTheControllingTerminal) {
     const auto result = RunProbe({}, "terminal", {slave_});
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("terminal"), 0);
+    EXPECT_EQ(ReadProbe().has_terminal, 0);
 }
 
 }  // namespace

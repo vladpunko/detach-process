@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -347,35 +346,29 @@ LaunchResult DetachTest::RunProbe(
     return result;
 }
 
-std::map<std::string, int64_t> DetachTest::ReadProbe() {
+ProbeState DetachTest::ReadProbe() {
     const auto deadline = Clock::now() + kTimeout;
     WaitReadable(listener_.Get(), deadline);
     peer_.Reset(CheckCall(accept(listener_.Get(), nullptr, nullptr), "accept"));
-    std::string message;
-    while (message.find("\n\n") == std::string::npos) {
+
+    // A stream socket may split a record across multiple reads.
+    ProbeState state = {};
+    auto *next = reinterpret_cast<char *>(&state);
+    size_t remaining = sizeof(state);
+    while (remaining > 0) {
         WaitReadable(peer_.Get(), deadline);
-        char buffer[1024];
-        ssize_t length = read(peer_.Get(), buffer, sizeof(buffer));
+        ssize_t length = read(peer_.Get(), next, remaining);
         if (length < 0 && errno == EINTR) {
             continue;
         }
-        CheckCall(static_cast<int>(length), "read probe");
+        CheckCall(static_cast<int>(length), "read probe state");
         if (length == 0) {
             throw std::runtime_error("Probe exited before reporting its state");
         }
-        message.append(buffer, static_cast<size_t>(length));
-        if (message.size() > 8192) {
-            throw std::runtime_error("Unexpectedly large probe report");
-        }
+        next += length;
+        remaining -= static_cast<size_t>(length);
     }
-    std::map<std::string, int64_t> state;
-    std::istringstream fields(message);
-    std::string key;
-    int64_t value;
-    while (fields >> key >> value) {
-        state.emplace(key, value);
-    }
-    probe_pid_ = static_cast<pid_t>(state.at("pid"));
+    probe_pid_ = static_cast<pid_t>(state.pid);
     probe_expected_ = true;
     return state;
 }

@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +19,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-static int write_all(int fd, const char *data, size_t size) {
+#include "tests/probe_state.h"
+
+static int write_all(int fd, const void *buffer, size_t size) {
+    const char *data = buffer;
     while (size > 0) {
         ssize_t length = write(fd, data, size);
         if (length < 0 && errno == EINTR) {
@@ -33,6 +37,10 @@ static int write_all(int fd, const char *data, size_t size) {
     return 1;
 }
 
+static int write_text(int fd, const char *text) {
+    return write_all(fd, text, strlen(text));
+}
+
 static int copy_stdin(void) {
     char buffer[4096];
     while (1) {
@@ -44,7 +52,7 @@ static int copy_stdin(void) {
             return 0;
         }
         if (length == 0) {
-            return write_all(STDERR_FILENO, "probe stderr\n", 13);
+            return write_text(STDERR_FILENO, "probe stderr\n");
         }
         if (!write_all(STDOUT_FILENO, buffer, (size_t)length)) {
             return 0;
@@ -69,17 +77,25 @@ static int extra_descriptors(int channel) {
         return -1;
     }
     int count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(directory)) != NULL) {
+    while (1) {
+        // Only a clean end of directory proves there were no extra handles.
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) {
+                count = -1;
+            }
+            break;
+        }
         char *end;
+        errno = 0;
         intmax_t fd = strtoimax(entry->d_name, &end, 10);
-        if (end != entry->d_name && *end == '\0' &&
+        if (errno == 0 && end != entry->d_name && *end == '\0' &&
             fd > STDERR_FILENO && fd != channel && fd != dirfd(directory)) {
             count += 1;
         }
     }
-    closedir(directory);
-    return count;
+    return closedir(directory) == 0 ? count : -1;
 }
 
 static int signal_ignored(int signal) {
@@ -96,10 +112,10 @@ static int run_mode(int argc, char *argv[]) {
         return copy_stdin();
     }
     if (strcmp(mode, "streams") == 0) {
-        return write_all(STDOUT_FILENO, "stdout one\n", 11) &&
-               write_all(STDERR_FILENO, "stderr one\n", 11) &&
-               write_all(STDOUT_FILENO, "stdout two\n", 11) &&
-               write_all(STDERR_FILENO, "stderr two\n", 11);
+        return write_text(STDOUT_FILENO, "stdout one\n") &&
+               write_text(STDERR_FILENO, "stderr one\n") &&
+               write_text(STDOUT_FILENO, "stdout two\n") &&
+               write_text(STDERR_FILENO, "stderr two\n");
     }
     if (strcmp(mode, "arguments") == 0) {
         for (int index = 3; index < argc; index += 1) {
@@ -137,6 +153,101 @@ static int run_mode(int argc, char *argv[]) {
            strcmp(mode, "pid-file") == 0;
 }
 
+static int connect_to_test(const char *path) {
+    int channel = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (channel < 0) {
+        return -1;
+    }
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof(address.sun_path)) {
+        close(channel);
+        return -1;
+    }
+    memcpy(address.sun_path, path, strlen(path) + 1);
+    if (connect(channel, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        close(channel);
+        return -1;
+    }
+    return channel;
+}
+
+static int capture_state(int channel, int argc, char *argv[],
+                         ProbeState *state) {
+    int terminal = open("/dev/tty", O_RDWR | O_NOCTTY);
+    int has_terminal = terminal >= 0;
+    if (terminal >= 0) {
+        close(terminal);
+    }
+    sigset_t mask;
+    if (sigprocmask(SIG_BLOCK, NULL, &mask) < 0) {
+        return 0;
+    }
+    mode_t creation_mask = umask(0);
+    umask(creation_mask);
+
+    intmax_t pid_file = -1;
+    if (strcmp(argv[1], "pid-file") == 0 && argc == 4) {
+        FILE *file = fopen(argv[3], "r");
+        if (file == NULL) {
+            return 0;
+        }
+        int fields = fscanf(file, "%" SCNdMAX, &pid_file);
+        fclose(file);
+        if (fields != 1) {
+            return 0;
+        }
+    }
+    int fd_open = -1;
+    if (strcmp(argv[1], "descriptor") == 0 && argc == 4) {
+        char *end;
+        errno = 0;
+        intmax_t fd = strtoimax(argv[3], &end, 10);
+        if (errno != 0 || end == argv[3] || *end != '\0' ||
+            fd < 0 || fd > INT_MAX) {
+            return 0;
+        }
+        fd_open = fcntl((int)fd, F_GETFD) >= 0;
+    }
+
+    state->pid = getpid();
+    state->parent_pid = getppid();
+    state->session_id = getsid(0);
+    state->process_group = getpgrp();
+    state->has_terminal = has_terminal;
+    state->extra_descriptors = extra_descriptors(channel);
+    state->stdin_is_null = is_null_input();
+    state->sigpipe_ignored = signal_ignored(SIGPIPE);
+    state->sigchld_ignored = signal_ignored(SIGCHLD);
+    state->sighup_ignored = signal_ignored(SIGHUP);
+    state->sigpipe_blocked = sigismember(&mask, SIGPIPE);
+    state->sigusr1_blocked = sigismember(&mask, SIGUSR1);
+    state->creation_mask = creation_mask;
+    state->descriptor_open = fd_open;
+    state->pid_file = pid_file;
+    return state->session_id >= 0 && state->extra_descriptors >= 0 &&
+           state->stdin_is_null >= 0 && state->sigpipe_ignored >= 0 &&
+           state->sigchld_ignored >= 0 && state->sighup_ignored >= 0;
+}
+
+static int wait_for_test(int channel) {
+    // Stay alive until the test closes the socket, answering liveness checks.
+    char command;
+    ssize_t length;
+    while ((length = read(channel, &command, 1)) != 0) {
+        if (length < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return 0;
+        }
+        if (!write_all(channel, &command, 1)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         return EXIT_FAILURE;
@@ -147,77 +258,14 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    int channel = socket(AF_UNIX, SOCK_STREAM, 0);
+    int channel = connect_to_test(argv[2]);
     if (channel < 0) {
         return EXIT_FAILURE;
     }
-    struct sockaddr_un address = {0};
-    address.sun_family = AF_UNIX;
-    if (strlen(argv[2]) >= sizeof(address.sun_path)) {
-        return EXIT_FAILURE;
-    }
-    memcpy(address.sun_path, argv[2], strlen(argv[2]) + 1);
-    if (connect(channel, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        return EXIT_FAILURE;
-    }
-
-    int terminal = open("/dev/tty", O_RDWR | O_NOCTTY);
-    int has_terminal = terminal >= 0;
-    if (terminal >= 0) {
-        close(terminal);
-    }
-    sigset_t mask;
-    if (sigprocmask(SIG_BLOCK, NULL, &mask) < 0) {
-        return EXIT_FAILURE;
-    }
-    mode_t creation_mask = umask(0);
-    umask(creation_mask);
-
-    intmax_t pid_file = -1;
-    if (strcmp(argv[1], "pid-file") == 0 && argc == 4) {
-        FILE *file = fopen(argv[3], "r");
-        if (file == NULL) {
-            return EXIT_FAILURE;
-        }
-        int fields = fscanf(file, "%" SCNdMAX, &pid_file);
-        fclose(file);
-        if (fields != 1) {
-            return EXIT_FAILURE;
-        }
-    }
-    int fd_open = -1;
-    if (strcmp(argv[1], "descriptor") == 0 && argc == 4) {
-        fd_open = fcntl(atoi(argv[3]), F_GETFD) >= 0;
-    }
-    if (dprintf(channel,
-                "pid %jd\nppid %jd\nsid %jd\npgrp %jd\n"
-                "terminal %d\nextra_descriptors %d\nstdin_is_null %d\n"
-                "sigpipe_ignored %d\nsigchld_ignored %d\nsighup_ignored %d\n"
-                "sigpipe_blocked %d\nsigusr1_blocked %d\numask %u\n"
-                "fd_open %d\npid_file %jd\n\n",
-                (intmax_t)getpid(), (intmax_t)getppid(), (intmax_t)getsid(0),
-                (intmax_t)getpgrp(), has_terminal, extra_descriptors(channel),
-                is_null_input(), signal_ignored(SIGPIPE),
-                signal_ignored(SIGCHLD), signal_ignored(SIGHUP),
-                sigismember(&mask, SIGPIPE), sigismember(&mask, SIGUSR1),
-                (unsigned int)creation_mask, fd_open, pid_file) < 0) {
-        return EXIT_FAILURE;
-    }
-
-    // Stay alive until the test closes the socket, answering liveness checks.
-    char command;
-    ssize_t length;
-    while ((length = read(channel, &command, 1)) != 0) {
-        if (length < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return EXIT_FAILURE;
-        }
-        if (!write_all(channel, &command, 1)) {
-            return EXIT_FAILURE;
-        }
-    }
+    ProbeState state = {0};
+    int success = capture_state(channel, argc, argv, &state) &&
+                  write_all(channel, &state, sizeof(state)) &&
+                  wait_for_test(channel);
     close(channel);
-    return EXIT_SUCCESS;
+    return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

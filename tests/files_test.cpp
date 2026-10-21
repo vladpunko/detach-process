@@ -38,7 +38,7 @@ TEST_F(FilesTest, DefaultInputIsDevNull) {
     const auto result = RunProbe({}, "stdio");
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("stdin_is_null"), 1);
+    EXPECT_EQ(ReadProbe().stdin_is_null, 1);
     EXPECT_TRUE(ReadFile(result.stdout_path).empty());
     EXPECT_EQ(ReadFile(result.stderr_path), "probe stderr\n");
 }
@@ -51,7 +51,7 @@ TEST_F(FilesTest, RedirectsAllThreeStreams) {
                                   "--stderr", Path("errors")}, "stdio");
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("stdin_is_null"), 0);
+    EXPECT_EQ(ReadProbe().stdin_is_null, 0);
     EXPECT_EQ(ReadFile(Path("input")), contents);
     EXPECT_EQ(ReadFile(Path("output")), contents);
     EXPECT_EQ(ReadFile(Path("errors")), "probe stderr\n");
@@ -109,7 +109,7 @@ TEST_F(FilesTest, RelativePathsAndSpacesInPathsWork) {
     EXPECT_EQ(ReadFile(Path("output file")), "contents\n");
     EXPECT_EQ(ReadFile(Path("error file")), "probe stderr\n");
     EXPECT_EQ(ReadFile(Path("pid file")),
-              std::to_string(state.at("pid")) + "\n");
+              std::to_string(state.pid) + "\n");
 }
 
 TEST_F(FilesTest, PidFileIsCompleteBeforeTheCommandStarts) {
@@ -119,9 +119,9 @@ TEST_F(FilesTest, PidFileIsCompleteBeforeTheCommandStarts) {
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     const auto state = ReadProbe();
-    EXPECT_EQ(state.at("pid_file"), state.at("pid"));
-    EXPECT_EQ(result.program_pid, state.at("pid"));
-    EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.at("pid")) + "\n");
+    EXPECT_EQ(state.pid_file, state.pid);
+    EXPECT_EQ(result.program_pid, state.pid);
+    EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.pid) + "\n");
 }
 
 TEST_F(FilesTest, DevNullCanReceiveBothOutputStreams) {
@@ -167,8 +167,8 @@ TEST_F(FilesTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
     ssize_t length = read(reader.Get(), buffer, sizeof(buffer));
     ASSERT_GT(length, 0);
     EXPECT_EQ(std::string(buffer, static_cast<size_t>(length)),
-              std::to_string(state.at("pid")) + "\n");
-    EXPECT_EQ(state.at("extra_descriptors"), 0);
+              std::to_string(state.pid) + "\n");
+    EXPECT_EQ(state.extra_descriptors, 0);
 }
 
 TEST_F(FilesTest, MissingStdinFailsBeforeStartingTheCommand) {

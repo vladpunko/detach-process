@@ -165,7 +165,7 @@ TEST_P(StartupRetryTest, RetriesWithoutChangingTheStartedCommand) {
     const auto result = RunProbe({}, "state", {}, Inject(GetParam()));
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
     PingProbe();
 }
 
@@ -282,7 +282,7 @@ TEST_P(ReportFailureTest, KeepsTheCommandAndItsLogsAvailable) {
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find("The command may already be running"),
               std::string::npos);
-    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
     PingProbe();
 }
 
@@ -295,7 +295,7 @@ TEST_F(FaultTest, StatusReadErrorPreservesThePossiblyRunningCommand) {
 
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find("startup channel:"), std::string::npos);
-    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
     PingProbe();
 }
 
@@ -359,7 +359,7 @@ TEST_P(DescriptorEntryTest, IgnoresNamesThatAreNotValidDescriptors) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+    EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 
 std::string EntryName(const testing::TestParamInfo<DirectoryEntry> &info) {
@@ -384,7 +384,7 @@ TEST_F(FaultTest, IgnoresNonNumericEntriesWhenConversionLeavesErrnoUnchanged) {
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+    EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 
 }  // namespace

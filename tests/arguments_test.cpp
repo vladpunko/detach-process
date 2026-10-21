@@ -57,7 +57,7 @@ TEST_F(ArgumentsTest, CommandDoesNotRequireASeparatorWhenNoOptionsAreUsed) {
     const auto result = Run(ProbeCommand());
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
-    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+    EXPECT_EQ(ReadProbe().pid, result.program_pid);
 }
 
 TEST_F(ArgumentsTest, CommandArgumentsArePreservedExactly) {

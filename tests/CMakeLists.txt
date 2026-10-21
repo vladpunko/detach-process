@@ -21,6 +21,7 @@ if(NOT TARGET GTest::gtest_main)
 endif()
 
 add_executable(detach_probe probe.c)
+target_include_directories(detach_probe PRIVATE "${PROJECT_SOURCE_DIR}")
 set_target_properties(detach_probe PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED YES
