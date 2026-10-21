@@ -5,7 +5,7 @@
 
 set -o errexit
 
-# Exit if this script is run as the superuser.
+# Installation writes system directories and requires the superuser.
 if [ "$(id -u)" -ne 0 ]; then
   echo 'This program needs to be run as a superuser on the current operating system.' >&2
   # Stop this program runtime and return the exit status code.

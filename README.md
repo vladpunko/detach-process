@@ -12,7 +12,9 @@ Detaching a long-running command usually means juggling `nohup`, backgrounding, 
 
 ## Installation
 
-Requirements: a Unix-like OS with [git](https://git-scm.com/downloads), a C compiler such as [gcc](https://gcc.gnu.org/install), and `install` (from [coreutils](https://www.gnu.org/software/coreutils/)). For the installer you also need [curl](https://curl.se/download.html) and `sudo`.
+Supported platforms are Linux and macOS. The utility requires an accessible `/dev/fd` directory to enumerate and close inherited descriptors. Minimal Linux containers must provide it, usually through `/proc/self/fd` with procfs mounted.
+
+Building from source requires [git](https://git-scm.com/downloads), a C99 compiler such as GCC or Clang, and `install` (provided by macOS and Linux coreutils). The installer invokes `gcc`. For the installer command below you also need [curl](https://curl.se/download.html) and `sudo`.
 
 To install this package as a standalone application with the command-line interface you are to run the following command:
 
@@ -23,7 +25,7 @@ install_script=$(curl -fsSL https://raw.githubusercontent.com/vladpunko/detach-p
 
 The install script defaults to `/usr/local/bin` for the binary and `/usr/local/share/man` for the man page.
 
-You can also install this system package on your working machine (works for unix-like operating systems) from source code to a system location:
+You can also build and install from a local checkout:
 
 ```bash
 # Step -- 1.
