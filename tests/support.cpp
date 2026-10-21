@@ -215,7 +215,7 @@ std::string ReadFile(const std::string &path) {
     while (stream.read(buffer, sizeof(buffer)) || stream.gcount() > 0) {
         contents.append(buffer, static_cast<size_t>(stream.gcount()));
     }
-    if (!stream.eof()) {
+    if (stream.bad() || !stream.eof()) {
         throw std::runtime_error("Cannot read " + path);
     }
     return contents;
