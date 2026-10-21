@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+
+# Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
+# Created date: 2026-10-21
+
 name: git hooks
 
 on:
@@ -25,7 +30,7 @@ jobs:
           pip3 install --no-cache-dir --upgrade cpplint pre-commit
 
       - name: Step -- 4.
-        run: cpplint detach.c
+        run: cpplint detach.c tests/*.c tests/*.cpp tests/*.h
 
       - name: Step -- 5.
         run: python3 -m pre_commit run --all-files --config .githooks.yml

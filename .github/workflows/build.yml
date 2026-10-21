@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+
+# Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
+# Created date: 2026-10-21
+
 name: detach build
 
 on:
@@ -8,11 +13,42 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            coverage: "OFF"
+          - os: macos-latest
+            coverage: "ON"
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Step -- 1.
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Step -- 2.
-        run: gcc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
+        run: cc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
+
+      - name: Step -- 3.
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DENABLE_COVERAGE=${{ matrix.coverage }} -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Step -- 4.
+        run: cmake --build build --parallel 2
+
+      - name: Step -- 5.
+        env:
+          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/profiles/%m-%p.profraw
+        run: ctest --test-dir build --output-on-failure --parallel 2
+
+      - name: Step -- 6.
+        if: matrix.coverage == 'ON'
+        run: |
+          cmake -E remove_directory build/coverage-profiles
+          mkdir -p build/coverage-profiles
+          export LLVM_PROFILE_FILE="${GITHUB_WORKSPACE}/build/coverage-profiles/%m-%p.profraw"
+          export DETACH_TEST_EXECUTABLE="${GITHUB_WORKSPACE}/build/tests/detach_faults"
+          ctest --test-dir build --output-on-failure --parallel 2
+          xcrun llvm-profdata merge -sparse build/coverage-profiles/*.profraw -o build/coverage.profdata
+          xcrun llvm-cov report build/tests/detach_faults -instr-profile=build/coverage.profdata detach.c
+          xcrun llvm-cov export build/tests/detach_faults -instr-profile=build/coverage.profdata -format=lcov detach.c > build/coverage.lcov
+          cmake -DREPORT=build/coverage.lcov -P tests/check_coverage.cmake

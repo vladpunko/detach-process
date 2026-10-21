@@ -1,0 +1,317 @@
+// -*- coding: utf-8 -*-
+
+// Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
+// Created date: 2026-10-21
+
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <string>
+
+#include "tests/support.h"
+
+namespace detach_test {
+namespace {
+
+using ProcessTest = DetachTest;
+
+TEST_F(ProcessTest, CommandRunsInANewSessionWithoutBeingItsLeader) {
+    const auto result = RunProbe();
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    const auto state = ReadProbe();
+    EXPECT_EQ(state.at("pid"), result.program_pid);
+    EXPECT_NE(state.at("ppid"), result.launcher_pid);
+    EXPECT_NE(state.at("ppid"), getpid());
+    EXPECT_NE(state.at("sid"), getsid(0));
+    EXPECT_NE(state.at("sid"), state.at("pid"));
+    EXPECT_EQ(state.at("pgrp"), state.at("sid"));
+    EXPECT_EQ(state.at("terminal"), 0);
+}
+
+TEST_F(ProcessTest, LauncherReturnsWhileTheCommandIsStillRunning) {
+    const auto result = RunProbe();
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    ReadProbe();
+    // The probe cannot finish until the fixture closes its control socket.
+    PingProbe();
+}
+
+TEST_F(ProcessTest, ReportsStartupSuccessEvenWhenTheCommandExitsWithAnError) {
+    const auto result = Run({"--", "/bin/sh", "-c", "exit 42"});
+
+    EXPECT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_GT(result.program_pid, 0);
+}
+
+TEST_F(ProcessTest, ReportsStartupSuccessEvenWhenTheCommandKillsItself) {
+    const auto result = Run({"--", "/bin/sh", "-c", "kill -TERM $$"});
+
+    EXPECT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_GT(result.program_pid, 0);
+}
+
+TEST_F(ProcessTest, LooksUpTheCommandInPath) {
+    CheckCall(symlink(PROBE_PATH, Path("probe-command").c_str()), "symlink");
+    LaunchOptions options;
+    options.environment["PATH"] = Path(".");
+    const auto result = Run({"--", "probe-command", "state", SocketPath()},
+                             options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("pid"), result.program_pid);
+}
+
+TEST_F(ProcessTest, MissingCommandInPathIsAnExecFailure) {
+    LaunchOptions options;
+    options.environment["PATH"] = Path(".");
+    const auto result = Run({"--", "no-such-command"}, options);
+
+    EXPECT_EQ(result.exit_code, 1);
+    EXPECT_NE(result.error.find("exec:"), std::string::npos);
+}
+
+TEST_F(ProcessTest, PreservesEnvironmentVariables) {
+    LaunchOptions options;
+    options.environment["DETACH_TEST_VALUE"] = "value with spaces\nand newline";
+    const auto result = RunProbe({}, "environment", {"DETACH_TEST_VALUE"},
+                                  options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    ReadProbe();
+    EXPECT_EQ(ReadFile(result.stdout_path),
+              options.environment.at("DETACH_TEST_VALUE"));
+}
+
+TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
+    const auto result = RunProbe({}, "cwd");
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    ReadProbe();
+    // macOS resolves the /tmp symlink when reporting the current directory.
+    const auto directory = ReadFile(result.stdout_path);
+    EXPECT_TRUE(std::filesystem::equivalent(directory, Path(".")));
+}
+
+TEST_F(ProcessTest, PreservesTheFileCreationMask) {
+    LaunchOptions options;
+    options.file_creation_mask = 0027;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("umask"), 0027);
+}
+
+TEST_F(ProcessTest, ClosesInternalDescriptorsBeforeExec) {
+    const auto result = RunProbe({"--pid", Path("pid")});
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+}
+
+TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
+    Descriptor inherited(CheckCall(open(Path("inherited").c_str(),
+        O_CREAT | O_RDWR, 0600), "open inherited descriptor"));
+    const auto result = RunProbe({}, "state");
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("extra_descriptors"), 0);
+    EXPECT_GE(fcntl(inherited.Get(), F_GETFD), 0);
+}
+
+TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
+    Descriptor source(CheckCall(open("/dev/null", O_RDONLY), "open /dev/null"));
+    Descriptor inherited(CheckCall(fcntl(source.Get(), F_DUPFD, 128),
+                                     "dup fd"));
+    LaunchOptions options;
+    options.descriptor_limit = 32;
+    const auto result = RunProbe({}, "descriptor",
+                                  {std::to_string(inherited.Get())}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    const auto state = ReadProbe();
+    EXPECT_EQ(state.at("fd_open"), 0);
+    EXPECT_EQ(state.at("extra_descriptors"), 0);
+    EXPECT_GE(fcntl(inherited.Get(), F_GETFD), 0);
+}
+
+TEST_F(ProcessTest, KeepsTheCallersDefaultSigpipeDisposition) {
+    const auto result = RunProbe();
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sigpipe_ignored"), 0);
+}
+
+TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
+    LaunchOptions options;
+    options.ignore_sigpipe = true;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sigpipe_ignored"), 1);
+}
+
+TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
+    LaunchOptions options;
+    options.block_sigpipe = true;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sigpipe_blocked"), 1);
+}
+
+TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
+    LaunchOptions options;
+    options.block_sigusr1 = true;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sigusr1_blocked"), 1);
+}
+
+TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
+    LaunchOptions options;
+    options.ignore_sigchld = true;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sigchld_ignored"), 1);
+}
+
+TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
+    LaunchOptions options;
+    options.ignore_sighup = true;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("sighup_ignored"), 1);
+}
+
+TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
+    LaunchOptions options;
+    options.broken_stdout = true;
+    const auto result = RunProbe({}, "streams", {}, options);
+
+    ASSERT_EQ(result.exit_code, 1);
+    EXPECT_NE(result.error.find("The command may already be running"),
+              std::string::npos);
+    const auto state = ReadProbe();
+    EXPECT_EQ(state.at("pid"), result.program_pid);
+    EXPECT_EQ(state.at("sigpipe_ignored"), 0);
+    EXPECT_EQ(ReadFile(result.stdout_path), "stdout one\nstdout two\n");
+    PingProbe();
+}
+
+TEST_F(ProcessTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
+    LaunchOptions options;
+    options.broken_stderr = true;
+    const auto result = Run({"--", Path("missing-command")}, options);
+
+    EXPECT_EQ(result.exit_code, 1);
+    EXPECT_TRUE(WIFEXITED(result.status));
+}
+
+TEST_F(ProcessTest, HelpReportsFailureWhenItsOutputCannotBeWritten) {
+    LaunchOptions options;
+    options.broken_stdout = true;
+    const auto result = Run({"--help"}, options);
+
+    EXPECT_NE(result.exit_code, 0);
+}
+
+TEST_F(ProcessTest, DescriptorExhaustionIsReportedAsAStartupFailure) {
+    LaunchOptions options;
+    options.descriptor_limit = 7;
+    const auto result = RunProbe({"--stdout", Path("output"),
+                                  "--stderr", Path("errors")},
+                                 "state", {}, options);
+
+    EXPECT_EQ(result.exit_code, 1);
+    EXPECT_NE(result.error.find("startup channel:"), std::string::npos);
+    EXPECT_TRUE(ReadFile(Path("output")).empty());
+    EXPECT_TRUE(ReadFile(Path("errors")).empty());
+}
+
+class ClosedStandardDescriptorsTest : public DetachTest,
+                                     public testing::WithParamInterface<int> {
+};
+
+TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
+    LaunchOptions options;
+    options.closed_standard_descriptors = GetParam();
+    const auto result = RunProbe({"--stdout", Path("output"),
+                                  "--stderr", Path("errors"),
+                                  "--pid", Path("pid")},
+                                 "stdio", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    const auto state = ReadProbe();
+    EXPECT_EQ(state.at("stdin_is_null"), 1);
+    EXPECT_EQ(state.at("extra_descriptors"), 0);
+    EXPECT_TRUE(ReadFile(Path("output")).empty());
+    EXPECT_EQ(ReadFile(Path("errors")), "probe stderr\n");
+    EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.at("pid")) + "\n");
+}
+
+INSTANTIATE_TEST_SUITE_P(StandardStreams, ClosedStandardDescriptorsTest,
+                         testing::Range(1, 8));
+
+class TerminalTest : public DetachTest {
+ protected:
+    void SetUp() override {
+        DetachTest::SetUp();
+        if (HasFatalFailure()) {
+            return;
+        }
+        terminal_.Reset(CheckCall(posix_openpt(O_RDWR | O_NOCTTY),
+                                   "posix_openpt"));
+        CheckCall(fcntl(terminal_.Get(), F_SETFD, FD_CLOEXEC), "fcntl");
+        CheckCall(grantpt(terminal_.Get()), "grantpt");
+        CheckCall(unlockpt(terminal_.Get()), "unlockpt");
+        char *name = ptsname(terminal_.Get());
+        ASSERT_NE(name, nullptr);
+        slave_ = name;
+    }
+
+    Descriptor terminal_;
+    std::string slave_;
+};
+
+TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
+    LaunchOptions options;
+    options.terminal = slave_;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    const auto state = ReadProbe();
+    EXPECT_EQ(state.at("terminal"), 0);
+    EXPECT_NE(state.at("sid"), result.launcher_pid);
+    EXPECT_EQ(state.at("sighup_ignored"), 0);
+}
+
+TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
+    LaunchOptions options;
+    options.terminal = slave_;
+    const auto result = RunProbe({}, "state", {}, options);
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    ReadProbe();
+    PingProbe();
+    terminal_.Reset();
+    PingProbe();
+}
+
+TEST_F(TerminalTest, OpeningATerminalDoesNotMakeItTheControllingTerminal) {
+    const auto result = RunProbe({}, "terminal", {slave_});
+
+    ASSERT_EQ(result.exit_code, 0) << result.error;
+    EXPECT_EQ(ReadProbe().at("terminal"), 0);
+}
+
+}  // namespace
+}  // namespace detach_test
