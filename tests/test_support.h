@@ -67,6 +67,8 @@ std::string ReadFile(const std::string& path);
 // Drains a nonblocking pipe after the probe confirms its writes are complete.
 std::string ReadAvailable(int fd);
 void WriteFile(const std::string& path, const std::string& contents);
+// Checks existence and records filesystem errors instead of hiding them.
+bool FileExists(const std::string& path);
 mode_t FileMode(const std::string& path);
 
 class DetachTest : public testing::Test {

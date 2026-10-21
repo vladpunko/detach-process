@@ -7,7 +7,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <filesystem>
 #include <initializer_list>
 #include <sstream>
 #include <string>
@@ -114,7 +113,7 @@ class FaultTest : public DetachTest {
 
   void ExpectTemporaryFilesRemoved() const {
     for (const auto& path : TemporaryFiles()) {
-      EXPECT_FALSE(std::filesystem::exists(path)) << path;
+      EXPECT_FALSE(FileExists(path)) << path;
     }
   }
 

@@ -28,6 +28,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -285,6 +286,13 @@ void WriteFile(const std::string& path, const std::string& contents) {
   stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
   stream.close();
   ASSERT_TRUE(stream) << "Cannot write " << path;
+}
+
+bool FileExists(const std::string& path) {
+  std::error_code error;
+  const bool exists = std::filesystem::exists(path, error);
+  EXPECT_FALSE(error) << path << ": " << error.message();
+  return exists;
 }
 
 mode_t FileMode(const std::string& path) {

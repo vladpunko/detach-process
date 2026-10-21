@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 #include "gtest/gtest.h"
 
@@ -121,7 +122,9 @@ TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
   ReadProbe();
   // macOS resolves the /tmp symlink when reporting the current directory.
   const auto directory = ReadFile(result.stdout_path);
-  EXPECT_TRUE(std::filesystem::equivalent(directory, Path(".")));
+  std::error_code error;
+  EXPECT_TRUE(std::filesystem::equivalent(directory, Path("."), error));
+  EXPECT_FALSE(error) << error.message();
 }
 
 TEST_F(ProcessTest, PreservesTheFileCreationMask) {
