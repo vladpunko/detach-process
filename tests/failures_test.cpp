@@ -8,7 +8,9 @@
 
 #include <cerrno>
 #include <filesystem>
-#include <fstream>
+#include <initializer_list>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -18,16 +20,35 @@
 namespace detach_test {
 namespace {
 
-struct Fault {
-    const char *name;
+enum class Role { kLauncher, kIntermediate, kCommand };
+
+struct FaultRule {
     const char *operation;
-    const char *role;
+    Role role;
     unsigned int call;
     int error;
-    const char *diagnostic;
 };
 
-std::string FaultName(const testing::TestParamInfo<Fault> &info) {
+// Test names and expected messages describe a scenario, not its injection rule.
+struct FaultCase {
+    const char *name;
+    FaultRule rule;
+    const char *diagnostic = "";
+};
+
+const char *RoleName(Role role) {
+    switch (role) {
+    case Role::kLauncher:
+        return "launcher";
+    case Role::kIntermediate:
+        return "intermediate";
+    case Role::kCommand:
+        return "command";
+    }
+    throw std::logic_error("Unknown fault process role");
+}
+
+std::string FaultName(const testing::TestParamInfo<FaultCase> &info) {
     return info.param.name;
 }
 
@@ -42,7 +63,13 @@ class FaultTest : public DetachTest {
     }
 
     void TearDown() override {
-        const auto paths = TemporaryFiles();
+        std::vector<std::string> paths;
+        try {
+            paths = TemporaryFiles();
+        } catch (const std::exception &error) {
+            ADD_FAILURE() << error.what();
+        }
+        // A broken event log must not prevent releasing the probe and sockets.
         DetachTest::TearDown();
         // Also clean files from intentionally failed unlink calls.
         for (const auto &path : paths) {
@@ -52,14 +79,30 @@ class FaultTest : public DetachTest {
         }
     }
 
-    LaunchOptions Inject(const Fault &fault) const {
+    LaunchOptions FaultOptions() const {
         LaunchOptions options;
         options.executable = FAULT_PATH;
         options.environment["DETACH_TEST_EVENTS"] = Path("events");
-        options.environment["DETACH_TEST_FAULTS"] =
-            std::string(fault.role) + ":" + fault.operation + ":" +
-            std::to_string(fault.call) + ":" + std::to_string(fault.error);
         return options;
+    }
+
+    LaunchOptions Inject(std::initializer_list<FaultRule> rules) const {
+        auto options = FaultOptions();
+        std::string plan;
+        for (const auto &rule : rules) {
+            if (!plan.empty()) {
+                plan += ";";
+            }
+            plan += std::string(RoleName(rule.role)) + ":" + rule.operation +
+                    ":" + std::to_string(rule.call) + ":" +
+                    std::to_string(rule.error);
+        }
+        options.environment["DETACH_TEST_FAULTS"] = plan;
+        return options;
+    }
+
+    LaunchOptions Inject(const FaultRule &rule) const {
+        return Inject({rule});
     }
 
     std::vector<std::string> TemporaryFiles() const {
@@ -67,7 +110,7 @@ class FaultTest : public DetachTest {
         if (!events_ready_) {
             return paths;
         }
-        std::ifstream events(Path("events"));
+        std::istringstream events(ReadFile(Path("events")));
         std::string path;
         while (std::getline(events, path)) {
             paths.push_back(path);
@@ -86,7 +129,7 @@ class FaultTest : public DetachTest {
 };
 
 class StartupFailureTest : public FaultTest,
-                           public testing::WithParamInterface<Fault> {
+                           public testing::WithParamInterface<FaultCase> {
  protected:
     void SetUp() override {
         FaultTest::SetUp();
@@ -96,13 +139,14 @@ class StartupFailureTest : public FaultTest,
         }
     }
 
+    // Survive exec deliberately to exercise closing inherited descriptors.
     Descriptor inherited_;
 };
 
 TEST_P(StartupFailureTest, ReportsTheFailureAndRemovesTemporaryLogs) {
     const auto &fault = GetParam();
     const auto result = RunProbe({"--pid", Path("pid")},
-                                 "state", {}, Inject(fault));
+                                 "state", {}, Inject(fault.rule));
 
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find(fault.diagnostic), std::string::npos)
@@ -110,87 +154,92 @@ TEST_P(StartupFailureTest, ReportsTheFailureAndRemovesTemporaryLogs) {
     ExpectTemporaryFilesRemoved();
 }
 
-const Fault kStartupFailures[] = {
-    {"SignalMask", "sigemptyset", "launcher", 1, EIO, "SIGPIPE:"},
-    {"SignalDisposition", "sigaction", "launcher", 1, EIO, "SIGPIPE:"},
-    {"StandardDescriptor", "fcntl", "launcher", 1, EIO,
+// Call numbers are local to each role and include earlier setup operations.
+// The launcher checks three standard fds before marking the startup socket.
+const FaultCase kStartupFailures[] = {
+    {"SignalMask", {"sigemptyset", Role::kLauncher, 1, EIO}, "SIGPIPE:"},
+    {"SignalDisposition", {"sigaction", Role::kLauncher, 1, EIO}, "SIGPIPE:"},
+    {"StandardDescriptor", {"fcntl", Role::kLauncher, 1, EIO},
      "standard descriptors:"},
-    {"TemporaryStdout", "mkstemp", "launcher", 1, EIO, "stdout:"},
-    {"TemporaryStderr", "mkstemp", "launcher", 2, EIO, "stderr:"},
-    {"StdoutStat", "fstat", "launcher", 1, EIO, "stdout:"},
-    {"StderrStat", "fstat", "launcher", 2, EIO, "stderr:"},
-    {"PidStat", "fstat", "launcher", 3, EIO, "pid:"},
-    {"StdinStat", "fstat", "launcher", 4, EIO, "stdin:"},
-    {"StdoutTruncate", "ftruncate", "launcher", 1, EIO, "stdout:"},
-    {"StderrTruncate", "ftruncate", "launcher", 2, EIO, "stderr:"},
-    {"PidTruncate", "ftruncate", "launcher", 3, EIO, "pid:"},
-    {"PidWrite", "dprintf", "launcher", 1, EIO, "pid:"},
-    {"PidClose", "close", "launcher", 3, EIO, "pid:"},
-    {"StartupSocket", "socketpair", "launcher", 1, EIO, "startup channel:"},
-    {"StartupCloseOnExec", "fcntl", "launcher", 4, EIO, "startup channel:"},
-    {"FirstFork", "fork", "launcher", 1, EAGAIN, "fork:"},
-    {"NewSession", "setsid", "intermediate", 1, EPERM,
+    {"TemporaryStdout", {"mkstemp", Role::kLauncher, 1, EIO}, "stdout:"},
+    {"TemporaryStderr", {"mkstemp", Role::kLauncher, 2, EIO}, "stderr:"},
+    {"StdoutStat", {"fstat", Role::kLauncher, 1, EIO}, "stdout:"},
+    {"StderrStat", {"fstat", Role::kLauncher, 2, EIO}, "stderr:"},
+    {"PidStat", {"fstat", Role::kLauncher, 3, EIO}, "pid:"},
+    {"StdinStat", {"fstat", Role::kLauncher, 4, EIO}, "stdin:"},
+    {"StdoutTruncate", {"ftruncate", Role::kLauncher, 1, EIO}, "stdout:"},
+    {"StderrTruncate", {"ftruncate", Role::kLauncher, 2, EIO}, "stderr:"},
+    {"PidTruncate", {"ftruncate", Role::kLauncher, 3, EIO}, "pid:"},
+    {"PidWrite", {"dprintf", Role::kLauncher, 1, EIO}, "pid:"},
+    {"PidClose", {"close", Role::kLauncher, 3, EIO}, "pid:"},
+    {"StartupSocket", {"socketpair", Role::kLauncher, 1, EIO},
+     "startup channel:"},
+    {"StartupCloseOnExec", {"fcntl", Role::kLauncher, 4, EIO},
+     "startup channel:"},
+    {"FirstFork", {"fork", Role::kLauncher, 1, EAGAIN}, "fork:"},
+    {"NewSession", {"setsid", Role::kIntermediate, 1, EPERM},
      "Failed to start the command"},
-    {"SecondFork", "fork", "intermediate", 1, EAGAIN,
+    {"SecondFork", {"fork", Role::kIntermediate, 1, EAGAIN},
      "Failed to start the command"},
-    {"WaitIntermediate", "waitpid", "launcher", 1, EIO, "waitpid:"},
-    {"ReceivePidError", "read", "launcher", 1, EIO, "startup channel:"},
-    {"ReceivePidEof", "read", "launcher", 1, FAULT_EOF,
+    {"WaitIntermediate", {"waitpid", Role::kLauncher, 1, EIO}, "waitpid:"},
+    {"ReceivePidError", {"read", Role::kLauncher, 1, EIO}, "startup channel:"},
+    {"ReceivePidEof", {"read", Role::kLauncher, 1, FAULT_EOF},
      "Failed to start the command"},
-    {"SendPermission", "send", "launcher", 1, EIO, "startup channel:"},
-    {"SendPidError", "send", "command", 1, EIO,
+    {"SendPermission", {"send", Role::kLauncher, 1, EIO}, "startup channel:"},
+    {"SendPidError", {"send", Role::kCommand, 1, EIO},
      "Failed to start the command"},
-    {"SendPidZero", "send", "command", 1, FAULT_EOF,
+    {"SendPidZero", {"send", Role::kCommand, 1, FAULT_EOF},
      "Failed to start the command"},
-    {"ReceivePermission", "read", "command", 1, EIO, "startup channel:"},
-    {"RedirectStdin", "dup2", "command", 1, EBADF, "stdin:"},
-    {"RedirectStdout", "dup2", "command", 2, EBADF, "stdout:"},
-    {"RedirectStderr", "dup2", "command", 3, EBADF, "stderr:"},
-    {"EnumerateDescriptors", "opendir", "command", 1, EIO, "/dev/fd:"},
-    {"ReadDescriptors", "readdir", "command", 1, EIO, "/dev/fd:"},
-    {"CloseInherited", "close", "command", 4, EIO,
+    {"ReceivePermission", {"read", Role::kCommand, 1, EIO}, "startup channel:"},
+    {"RedirectStdin", {"dup2", Role::kCommand, 1, EBADF}, "stdin:"},
+    {"RedirectStdout", {"dup2", Role::kCommand, 2, EBADF}, "stdout:"},
+    {"RedirectStderr", {"dup2", Role::kCommand, 3, EBADF}, "stderr:"},
+    {"EnumerateDescriptors", {"opendir", Role::kCommand, 1, EIO}, "/dev/fd:"},
+    {"ReadDescriptors", {"readdir", Role::kCommand, 1, EIO}, "/dev/fd:"},
+    {"CloseInherited", {"close", Role::kCommand, 4, EIO},
      "close inherited descriptor:"},
-    {"CloseDirectory", "closedir", "command", 1, EIO, "/dev/fd:"},
-    {"RestoreSigpipe", "sigaction", "command", 1, EIO, "SIGPIPE:"},
+    {"CloseDirectory", {"closedir", Role::kCommand, 1, EIO}, "/dev/fd:"},
+    {"RestoreSigpipe", {"sigaction", Role::kCommand, 1, EIO}, "SIGPIPE:"},
 };
 
 INSTANTIATE_TEST_SUITE_P(SystemCalls, StartupFailureTest,
                          testing::ValuesIn(kStartupFailures), FaultName);
 
 class StartupRetryTest : public FaultTest,
-                         public testing::WithParamInterface<Fault> {
+                         public testing::WithParamInterface<FaultCase> {
 };
 
 TEST_P(StartupRetryTest, RetriesWithoutChangingTheStartedCommand) {
-    const auto result = RunProbe({}, "state", {}, Inject(GetParam()));
+    const auto result = RunProbe({}, "state", {}, Inject(GetParam().rule));
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
     EXPECT_EQ(ReadProbe().pid, result.program_pid);
     PingProbe();
 }
 
-const Fault kStartupRetries[] = {
-    {"InterruptedPidRead", "read", "launcher", 1, EINTR, ""},
-    {"InterruptedStatusRead", "read", "launcher", 2, EINTR, ""},
-    {"InterruptedPermissionRead", "read", "command", 1, EINTR, ""},
-    {"InterruptedPidSend", "send", "command", 1, EINTR, ""},
-    {"InterruptedPermissionSend", "send", "launcher", 1, EINTR, ""},
-    {"InterruptedWait", "waitpid", "launcher", 1, EINTR, ""},
-    {"AlreadyReapedIntermediate", "waitpid", "launcher", 1, ECHILD, ""},
-    {"PartialPidRead", "read", "launcher", 1, FAULT_SHORT_IO, ""},
-    {"PartialPidSend", "send", "command", 1, FAULT_SHORT_IO, ""},
+const FaultCase kStartupRetries[] = {
+    {"InterruptedPidRead", {"read", Role::kLauncher, 1, EINTR}},
+    {"InterruptedStatusRead", {"read", Role::kLauncher, 2, EINTR}},
+    {"InterruptedPermissionRead", {"read", Role::kCommand, 1, EINTR}},
+    {"InterruptedPidSend", {"send", Role::kCommand, 1, EINTR}},
+    {"InterruptedPermissionSend", {"send", Role::kLauncher, 1, EINTR}},
+    {"InterruptedWait", {"waitpid", Role::kLauncher, 1, EINTR}},
+    {"AlreadyReapedIntermediate", {"waitpid", Role::kLauncher, 1, ECHILD}},
+    {"PartialPidRead", {"read", Role::kLauncher, 1, FAULT_SHORT_IO}},
+    {"PartialPidSend", {"send", Role::kCommand, 1, FAULT_SHORT_IO}},
 };
 
 INSTANTIATE_TEST_SUITE_P(StartupChannel, StartupRetryTest,
                          testing::ValuesIn(kStartupRetries), FaultName);
 
 class DiagnosticFailureTest : public FaultTest,
-                              public testing::WithParamInterface<Fault> {
+                              public testing::WithParamInterface<FaultCase> {
 };
 
 TEST_P(DiagnosticFailureTest, StillReportsStartupFailureAndCleansUp) {
     const auto &fault = GetParam();
-    const auto result = Run({"--", Path("missing-command")}, Inject(fault));
+    const auto result = Run({"--", Path("missing-command")},
+                             Inject(fault.rule));
 
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find(fault.diagnostic), std::string::npos)
@@ -198,24 +247,24 @@ TEST_P(DiagnosticFailureTest, StillReportsStartupFailureAndCleansUp) {
     ExpectTemporaryFilesRemoved();
 }
 
-const Fault kDiagnosticFailures[] = {
-    {"SeekLog", "lseek", "launcher", 1, EIO, "stderr:"},
-    {"ReadLog", "read", "launcher", 3, EIO, "stderr:"},
-    {"InterruptedLogRead", "read", "launcher", 3, EINTR, "exec:"},
-    {"WriteDiagnostic", "fwrite", "launcher", 1, EIO,
+const FaultCase kDiagnosticFailures[] = {
+    {"SeekLog", {"lseek", Role::kLauncher, 1, EIO}, "stderr:"},
+    {"ReadLog", {"read", Role::kLauncher, 3, EIO}, "stderr:"},
+    {"InterruptedLogRead", {"read", Role::kLauncher, 3, EINTR}, "exec:"},
+    {"WriteDiagnostic", {"fwrite", Role::kLauncher, 1, EIO},
      "Failed to start the command"},
-    {"RestoreIgnoredSigpipe", "sigaction", "command", 2, EIO,
+    {"RestoreIgnoredSigpipe", {"sigaction", Role::kCommand, 2, EIO},
      "Failed to start the command"},
-    {"InterruptedFailureReport", "send", "command", 2, EINTR, "exec:"},
-    {"UnlinkStdout", "unlink", "command", 1, EACCES, "/tmp/stdout."},
-    {"UnlinkStderr", "unlink", "command", 2, EACCES, "/tmp/stderr."},
+    {"InterruptedFailureReport", {"send", Role::kCommand, 2, EINTR}, "exec:"},
+    {"UnlinkStdout", {"unlink", Role::kCommand, 1, EACCES}, "/tmp/stdout."},
+    {"UnlinkStderr", {"unlink", Role::kCommand, 2, EACCES}, "/tmp/stderr."},
 };
 
 INSTANTIATE_TEST_SUITE_P(Diagnostics, DiagnosticFailureTest,
                          testing::ValuesIn(kDiagnosticFailures), FaultName);
 
 TEST_F(FaultTest, FailureToReopenDevNullIsReported) {
-    auto options = Inject({"", "open", "launcher", 1, EACCES, ""});
+    auto options = Inject({"open", Role::kLauncher, 1, EACCES});
     options.closed_standard_descriptors = 1 << STDIN_FILENO;
     const auto result = Run({"--", PROBE_PATH, "state", SocketPath()}, options);
 
@@ -226,7 +275,7 @@ TEST_F(FaultTest, FailureToReopenDevNullIsReported) {
 TEST_F(FaultTest, FailureToShareOutputOffsetsIsReported) {
     const auto result = RunProbe({"--stdout", Path("combined"),
                                   "--stderr", Path("combined")}, "state", {},
-        Inject({"", "dup2", "launcher", 1, EBADF, ""}));
+        Inject({"dup2", Role::kLauncher, 1, EBADF}));
 
     EXPECT_EQ(result.exit_code, 1);
     EXPECT_NE(result.error.find("stderr:"), std::string::npos);
@@ -234,23 +283,21 @@ TEST_F(FaultTest, FailureToShareOutputOffsetsIsReported) {
 
 TEST_F(FaultTest, UnexpectedParserReturnIsRejected) {
     const auto result = Run({"--help"},
-        Inject({"", "getopt_long", "launcher", 1, EINVAL, ""}));
+        Inject({"getopt_long", Role::kLauncher, 1, EINVAL}));
 
     EXPECT_EQ(result.exit_code, 1);
     EXPECT_NE(result.error.find("Unknown option."), std::string::npos);
 }
 
 TEST_F(FaultTest, NullOptionArgumentIsTreatedAsEmpty) {
-    LaunchOptions options;
-    options.executable = FAULT_PATH;
+    auto options = FaultOptions();
     options.environment["DETACH_TEST_HELPER"] = "empty-null";
 
     EXPECT_EQ(Run({}, options).exit_code, 0);
 }
 
 TEST_F(FaultTest, RedirectingADescriptorToItselfKeepsItOpen) {
-    LaunchOptions options;
-    options.executable = FAULT_PATH;
+    auto options = FaultOptions();
     options.environment["DETACH_TEST_HELPER"] = "same-descriptor";
 
     EXPECT_EQ(Run({}, options).exit_code, 0);
@@ -262,7 +309,7 @@ class HelpFailureTest : public FaultTest,
 
 TEST_P(HelpFailureTest, ReportsAWriteOrCloseError) {
     const auto result = Run({"--help"},
-        Inject({"", GetParam(), "launcher", 1, EIO, ""}));
+        Inject({GetParam(), Role::kLauncher, 1, EIO}));
 
     EXPECT_EQ(result.exit_code, 1);
     EXPECT_NE(result.error.find("help:"), std::string::npos);
@@ -277,7 +324,7 @@ class ReportFailureTest : public FaultTest,
 
 TEST_P(ReportFailureTest, KeepsTheCommandAndItsLogsAvailable) {
     const auto result = RunProbe({}, "state", {},
-        Inject({"", GetParam(), "launcher", 1, EIO, ""}));
+        Inject({GetParam(), Role::kLauncher, 1, EIO}));
 
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find("The command may already be running"),
@@ -291,7 +338,7 @@ INSTANTIATE_TEST_SUITE_P(LaunchReport, ReportFailureTest,
 
 TEST_F(FaultTest, StatusReadErrorPreservesThePossiblyRunningCommand) {
     const auto result = RunProbe({}, "state", {},
-        Inject({"", "read", "launcher", 2, EIO, ""}));
+        Inject({"read", Role::kLauncher, 2, EIO}));
 
     ASSERT_EQ(result.exit_code, 1) << result.error;
     EXPECT_NE(result.error.find("startup channel:"), std::string::npos);
@@ -300,9 +347,7 @@ TEST_F(FaultTest, StatusReadErrorPreservesThePossiblyRunningCommand) {
 }
 
 TEST_F(FaultTest, AliasedTemporaryStderrIsReadThroughTheOpenDescriptor) {
-    LaunchOptions options;
-    options.executable = FAULT_PATH;
-    options.environment["DETACH_TEST_EVENTS"] = Path("events");
+    auto options = FaultOptions();
     options.environment["DETACH_TEST_STDERR_ALIAS"] = Path("stderr-alias");
     const auto result = Run({"--stderr", Path("stderr-alias"), "--",
                              Path("missing-command")}, options);
@@ -317,7 +362,7 @@ TEST_F(FaultTest, LostFailureReportHasTheDocumentedEofStartupStatus) {
     const auto result = Run({"--stdout", Path("output"),
                              "--stderr", Path("errors"),
                              "--", Path("missing-command")},
-        Inject({"", "send", "command", 2, EPIPE, ""}));
+        Inject({"send", Role::kCommand, 2, EPIPE}));
 
     // Without a failure byte, EOF cannot distinguish exec from early exit.
     EXPECT_EQ(result.exit_code, 0) << result.error;
@@ -328,7 +373,7 @@ TEST_F(FaultTest, InvalidPermissionStopsTheCommandBeforeExec) {
     const auto result = Run({"--stdout", Path("output"),
                              "--stderr", Path("errors"),
                              "--", Path("missing-command")},
-        Inject({"", "read", "command", 1, FAULT_BAD_PERMISSION, ""}));
+        Inject({"read", Role::kCommand, 1, FAULT_BAD_PERMISSION}));
 
     EXPECT_EQ(result.exit_code, 0) << result.error;
     EXPECT_TRUE(ReadFile(Path("errors")).empty());
@@ -337,7 +382,7 @@ TEST_F(FaultTest, InvalidPermissionStopsTheCommandBeforeExec) {
 
 TEST_F(FaultTest, UnexpectedParserAdvanceIsNotASeparator) {
     const auto result = Run({"ordinary-argument"},
-        Inject({"", "getopt_long", "launcher", 1, FAULT_PARSER_ADVANCE, ""}));
+        Inject({"getopt_long", Role::kLauncher, 1, FAULT_PARSER_ADVANCE}));
 
     EXPECT_EQ(result.exit_code, 1);
     EXPECT_NE(result.error.find("Missing command"), std::string::npos);
@@ -353,8 +398,8 @@ class DescriptorEntryTest : public FaultTest,
 };
 
 TEST_P(DescriptorEntryTest, IgnoresNamesThatAreNotValidDescriptors) {
-    auto options = Inject({"", "readdir", "command", 1,
-                            FAULT_DIRECTORY_ENTRY, ""});
+    auto options = Inject(
+        {"readdir", Role::kCommand, 1, FAULT_DIRECTORY_ENTRY});
     options.environment["DETACH_TEST_ENTRY"] = GetParam().value;
     const auto result = RunProbe({}, "state", {}, options);
 
@@ -377,10 +422,11 @@ INSTANTIATE_TEST_SUITE_P(DirectoryEntries, DescriptorEntryTest,
                          testing::ValuesIn(kInvalidEntries), EntryName);
 
 TEST_F(FaultTest, IgnoresNonNumericEntriesWhenConversionLeavesErrnoUnchanged) {
-    auto options = Inject({"", "readdir", "command", 1,
-                            FAULT_DIRECTORY_ENTRY, ""});
+    auto options = Inject({
+        {"readdir", Role::kCommand, 1, FAULT_DIRECTORY_ENTRY},
+        {"strtoimax", Role::kCommand, 1, 0},
+    });
     options.environment["DETACH_TEST_ENTRY"] = "not-a-number";
-    options.environment["DETACH_TEST_FAULTS"] += ";command:strtoimax:1:0";
     const auto result = RunProbe({}, "state", {}, options);
 
     ASSERT_EQ(result.exit_code, 0) << result.error;
