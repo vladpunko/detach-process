@@ -12,6 +12,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,15 +21,40 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// Boolean macros for readability in this file.
-#define TRUE 1
-#define FALSE 0
-
 #define OPTION_SEPARATOR "--"
-#define STRING_TERMINATOR '\0'
-
 #define DEV_NULL_PATH "/dev/null"
 #define DEV_FD_PATH "/dev/fd"
+
+struct options {
+  const char* stdin_path;
+  const char* stdout_path;
+  const char* stderr_path;
+  const char* pid_path;
+  char** command;
+};
+
+struct opened_file {
+  const char* path;
+  int fd;
+  struct stat info;
+  bool temporary;
+};
+
+struct launch_files {
+  struct opened_file input;
+  struct opened_file output;
+  struct opened_file errors;
+  struct opened_file pid;
+  char stdout_template[sizeof("/tmp/stdout.XXXXXX")];
+  char stderr_template[sizeof("/tmp/stderr.XXXXXX")];
+};
+
+struct signal_state {
+  struct sigaction original_sigpipe;
+  struct sigaction ignored_sigpipe;
+};
+
+enum parse_result { PARSE_ERROR, PARSE_HELP, PARSE_COMMAND };
 
 static const struct option long_options[] = {
     {"help", no_argument, NULL, 'h'},
@@ -39,7 +65,8 @@ static const struct option long_options[] = {
     {NULL, 0, NULL, 0},
 };
 
-static int print_usage(FILE* stream) {
+// Writes the shared CLI reference used by help and argument diagnostics.
+static bool print_usage(FILE* stream) {
   const char* message =
       "Usage: detach [OPTIONS] -- program [ARGS...]\n"
       "\n"
@@ -56,67 +83,314 @@ static int print_usage(FILE* stream) {
   return fprintf(stream, message, OPTION_SEPARATOR) >= 0;
 }
 
-static int argument_is_empty(const char* argument) {
-  if (argument == NULL) {
-    return TRUE;
-  }
-
-  if (argument[0] == STRING_TERMINATOR) {
-    return TRUE;
-  }
-
-  return FALSE;
+// Recognizes missing or empty values before they can become file paths.
+static bool argument_is_empty(const char* argument) {
+  return argument == NULL || argument[0] == '\0';
 }
 
-static int is_same_file(const struct stat* first, const struct stat* second) {
-  // Device and inode identify a file even when its paths differ.
+// Validates and stores one path option before startup can change any files.
+static bool set_file_option(const char** path, const char* value,
+                            const char* name) {
+  if (argument_is_empty(value)) {
+    fprintf(stderr, "Missing an argument for the option: %s\n", name);
+    print_usage(stderr);
+    return false;
+  }
+  *path = value;
+  return true;
+}
+
+// Separates launcher options from the command while preserving its arguments
+// for direct execution. Invalid input is rejected before opening files.
+static enum parse_result parse_arguments(int argc, char* argv[],
+                                         struct options* options) {
+  bool options_present = false;
+  int next_argument = optind;
+
+  // Stop at the command. The colon lets us diagnose missing option values.
+  opterr = false;
+  int option;
+  while ((option = getopt_long(argc, argv, "+:", long_options, NULL)) != -1) {
+    switch (option) {
+      case 'i':
+        if (!set_file_option(&options->stdin_path, optarg, "--stdin")) {
+          return PARSE_ERROR;
+        }
+        break;
+      case 'o':
+        if (!set_file_option(&options->stdout_path, optarg, "--stdout")) {
+          return PARSE_ERROR;
+        }
+        break;
+      case 'e':
+        if (!set_file_option(&options->stderr_path, optarg, "--stderr")) {
+          return PARSE_ERROR;
+        }
+        break;
+      case 'p':
+        if (!set_file_option(&options->pid_path, optarg, "--pid")) {
+          return PARSE_ERROR;
+        }
+        break;
+      case 'h':
+        return PARSE_HELP;
+      case ':':
+        fprintf(stderr, "Missing an argument for the option: %s\n",
+                argv[next_argument]);
+        print_usage(stderr);
+        return PARSE_ERROR;
+      case '?':
+        // Grouped short options can leave optind on the current argument.
+        fprintf(stderr, "Unknown option: %s\n", argv[next_argument]);
+        print_usage(stderr);
+        return PARSE_ERROR;
+      default:
+        fputs("Unknown option.\n", stderr);
+        print_usage(stderr);
+        return PARSE_ERROR;
+    }
+    options_present = true;
+    next_argument = optind;
+  }
+
+  bool separator_present = optind > next_argument &&
+                           strcmp(argv[next_argument], OPTION_SEPARATOR) == 0;
+  if (options_present && !separator_present) {
+    fprintf(stderr,
+            "Missing %s separator between detach options and the command.\n",
+            OPTION_SEPARATOR);
+    print_usage(stderr);
+    return PARSE_ERROR;
+  }
+  if (optind >= argc) {
+    fputs("Missing command to detach.\n", stderr);
+    print_usage(stderr);
+    return PARSE_ERROR;
+  }
+  options->command = &argv[optind];
+  return PARSE_COMMAND;
+}
+
+// Prints help without starting a process and checks buffered output failures.
+static bool show_help(void) {
+  // fclose also checks errors from flushing buffered help text.
+  if (!print_usage(stdout) || fclose(stdout) == EOF) {
+    perror("help");
+    return false;
+  }
+  return true;
+}
+
+// Compares opened file identities so different paths, hard links, and symlinks
+// cannot hide a conflicting stream or PID file.
+static bool is_same_file(const struct stat* first, const struct stat* second) {
   return first->st_dev == second->st_dev && first->st_ino == second->st_ino;
 }
 
-static int open_missing_standard_descriptors(void) {
-  // Keep 0, 1, and 2 occupied so internal files cannot take their place.
+// Truncates and rewinds a regular file for fresh output while leaving pipes
+// and devices usable.
+static bool reset_regular_file(int fd, const struct stat* file_stat,
+                               const char* label) {
+  if (!S_ISREG(file_stat->st_mode)) {
+    return true;
+  }
+  if (ftruncate(fd, 0) < 0) {
+    perror(label);
+    return false;
+  }
+  // Truncation keeps the offset. On macOS, /dev/fd can inherit a nonzero one.
+  // Rewind explicitly so new output cannot start with a hole of zero bytes.
+  if (lseek(fd, 0, SEEK_SET) < 0) {
+    perror(label);
+    return false;
+  }
+  return true;
+}
+
+// Opens a selected log or creates a private temporary one. Existing contents
+// are preserved until all file aliases have been checked.
+static bool open_log_file(struct opened_file* file, char* temporary_path,
+                          const char* label) {
+  bool temporary = file->path == NULL;
+  if (temporary) {
+    file->fd = mkstemp(temporary_path);
+  } else {
+    // Alias checks must finish before any existing file is truncated.
+    file->fd = open(file->path, O_CREAT | O_WRONLY, 0600);
+  }
+  if (file->fd < 0) {
+    perror(label);
+    return false;
+  }
+  file->temporary = temporary;
+  if (temporary) {
+    file->path = temporary_path;
+  }
+  return true;
+}
+
+// Captures the identity of the actual opened file for alias and type checks.
+static bool inspect_file(struct opened_file* file, const char* label) {
+  if (fstat(file->fd, &file->info) < 0) {
+    perror(label);
+    return false;
+  }
+  return true;
+}
+
+// Rejects stream and PID file conflicts before truncation could destroy
+// unread input or overwrite launch metadata.
+static bool validate_file_aliases(const struct launch_files* files) {
+  const struct stat* input = &files->input.info;
+  const struct stat* output = &files->output.info;
+  const struct stat* errors = &files->errors.info;
+  const struct stat* pid = &files->pid.info;
+
+  if (files->pid.path != NULL &&
+      (is_same_file(pid, input) || is_same_file(pid, output) ||
+       is_same_file(pid, errors))) {
+    fputs("PID file must differ from stdin, stdout, and stderr.\n", stderr);
+    return false;
+  }
+  // Reject regular input aliases while allowing shared devices like /dev/null.
+  if (S_ISREG(input->st_mode) &&
+      (is_same_file(input, output) || is_same_file(input, errors))) {
+    fputs("stdin must differ from stdout and stderr for regular files.\n",
+          stderr);
+    return false;
+  }
+  return true;
+}
+
+// Resets validated logs and shares their offset when stdout and stderr
+// refer to the same file, preventing overlapping writes.
+static bool prepare_output_files(const struct launch_files* files) {
+  if (!reset_regular_file(files->output.fd, &files->output.info, "stdout") ||
+      !reset_regular_file(files->errors.fd, &files->errors.info, "stderr")) {
+    return false;
+  }
+  // Share the offset so writes through one stream cannot overwrite the other.
+  if (is_same_file(&files->output.info, &files->errors.info) &&
+      dup2(files->output.fd, files->errors.fd) < 0) {
+    perror("stderr");
+    return false;
+  }
+  return true;
+}
+
+// Opens the input, logs, and optional PID file and records their identities.
+// It leaves existing contents intact for validation.
+static bool open_launch_files(struct launch_files* files) {
+  files->input.fd = open(files->input.path, O_RDONLY);
+  if (files->input.fd < 0) {
+    perror("stdin");
+    return false;
+  }
+  if (!open_log_file(&files->output, files->stdout_template, "stdout") ||
+      !open_log_file(&files->errors, files->stderr_template, "stderr")) {
+    return false;
+  }
+  if (!inspect_file(&files->output, "stdout") ||
+      !inspect_file(&files->errors, "stderr")) {
+    return false;
+  }
+  if (files->pid.path != NULL) {
+    files->pid.fd = open(files->pid.path, O_CREAT | O_WRONLY, 0600);
+    if (files->pid.fd < 0) {
+      perror("pid");
+      return false;
+    }
+    if (!inspect_file(&files->pid, "pid")) {
+      return false;
+    }
+  }
+  if (!inspect_file(&files->input, "stdin")) {
+    return false;
+  }
+  return true;
+}
+
+// Removes only a log created by this launch, tolerating cleanup already
+// performed by another startup process.
+static void remove_temporary_file(const struct opened_file* file) {
+  if (!file->temporary) {
+    return;
+  }
+  // Another startup process may already have removed the same temporary log.
+  if (unlink(file->path) < 0 && errno != ENOENT) {
+    perror(file->path);
+  }
+}
+
+// Cleans up generated logs and returns failure for an aborted startup.
+// User-selected files are kept for inspection.
+static int fail_startup(const struct launch_files* files) {
+  remove_temporary_file(&files->output);
+  remove_temporary_file(&files->errors);
+  return EXIT_FAILURE;
+}
+
+// Writes the final command PID through the already validated descriptor
+// before the launcher permits the command to execute.
+static bool save_pid_file(int fd, pid_t pid, const struct stat* file_stat) {
+  if (!reset_regular_file(fd, file_stat, "pid")) {
+    return false;
+  }
+  if (dprintf(fd, "%jd\n", (intmax_t)pid) < 0) {
+    perror("pid");
+    close(fd);
+    return false;
+  }
+  if (close(fd) < 0) {
+    perror("pid");
+    return false;
+  }
+  return true;
+}
+
+// Fills closed standard descriptor slots so internal files and sockets
+// cannot accidentally take the place of stdin, stdout, or stderr.
+static bool open_missing_standard_descriptors(void) {
   for (int fd = STDIN_FILENO; fd <= STDERR_FILENO; fd += 1) {
     if (fcntl(fd, F_GETFD) >= 0) {
       continue;
     }
     if (errno != EBADF) {
       perror("standard descriptors");
-
-      return FALSE;
+      return false;
     }
     if (open(DEV_NULL_PATH, O_RDWR) < 0) {
       perror(DEV_NULL_PATH);
-
-      return FALSE;
+      return false;
     }
   }
-  return TRUE;
+  return true;
 }
 
-static int redirect_standard_descriptor(int source_fd, int target_fd,
-                                        const char* label) {
+// Installs a command stream and releases its original descriptor while
+// keeping an already matching standard descriptor open.
+static bool redirect_standard_descriptor(int source_fd, int target_fd,
+                                         const char* label) {
   if (dup2(source_fd, target_fd) < 0) {
     perror(label);
-
-    return FALSE;
+    return false;
   }
-  // After duplication, only the standard descriptor is needed.
   if (source_fd != target_fd) {
     close(source_fd);
   }
-  return TRUE;
+  return true;
 }
 
-static int close_inherited_descriptors(int startup_fd) {
-  // Enumerate open descriptors, including those above a lowered limit.
+// Closes inherited handles before exec, preserving redirected streams and
+// the startup socket. Enumeration also finds handles above a lowered limit.
+static bool close_inherited_descriptors(int startup_fd) {
   DIR* directory = opendir(DEV_FD_PATH);
   if (directory == NULL) {
     perror(DEV_FD_PATH);
-
-    return FALSE;
+    return false;
   }
 
-  while (TRUE) {
+  while (true) {
     // If readdir returns NULL, errno tells us whether reading failed.
     // Clear it first so an earlier error cannot look like a read failure.
     errno = 0;
@@ -125,91 +399,66 @@ static int close_inherited_descriptors(int startup_fd) {
       if (errno != 0) {
         perror(DEV_FD_PATH);
         closedir(directory);
-
-        return FALSE;
+        return false;
       }
       break;
     }
 
-    // Descriptor entries have numeric names. Ignore "." and "..".
-    // Check the range before converting the number to an int.
-    // Preserve stdin, stdout, and stderr, which are already redirected.
+    // Ignore nonnumeric entries, standard streams, and values outside int.
     char* end;
     errno = 0;
     intmax_t fd = strtoimax(entry->d_name, &end, 10);
-    if (errno != 0 || end == entry->d_name || *end != STRING_TERMINATOR ||
+    if (errno != 0 || end == entry->d_name || *end != '\0' ||
         fd <= STDERR_FILENO || fd > INT_MAX) {
       continue;
     }
 
-    // Keep the directory itself open until enumeration is complete.
-    if (fd == dirfd(directory)) {
+    // Keep enumeration and startup communication alive until they complete.
+    if (fd == dirfd(directory) || fd == startup_fd) {
       continue;
     }
-    // Preserve the startup channel until exec closes it automatically.
-    if (fd == startup_fd) {
-      continue;
-    }
-    // This function runs only in the child. Closing its copies does
-    // not close the corresponding descriptors in the parent process.
     if (close((int)fd) < 0) {
       perror("close inherited descriptor");
       closedir(directory);
-
-      return FALSE;
+      return false;
     }
   }
 
-  // Close the directory and its file descriptor after reading all entries.
   if (closedir(directory) < 0) {
     perror(DEV_FD_PATH);
-
-    return FALSE;
+    return false;
   }
-  return TRUE;
+  return true;
 }
 
-static int reset_regular_file(int fd, const struct stat* file_stat,
-                              const char* label) {
-  // Pipes and devices must remain usable without truncation or seeking.
-  if (!S_ISREG(file_stat->st_mode)) {
-    return TRUE;
-  }
-  if (ftruncate(fd, 0) < 0) {
-    perror(label);
-
-    return FALSE;
-  }
-  // Truncation keeps the offset. On macOS, /dev/fd can inherit a nonzero one.
-  // Rewind explicitly so new output cannot start with a hole of zero bytes.
-  if (lseek(fd, 0, SEEK_SET) < 0) {
-    perror(label);
-
-    return FALSE;
-  }
-  return TRUE;
+// Redirects all command streams, then closes unrelated inherited handles
+// without losing the channel needed to report startup failures.
+static bool prepare_command_streams(const struct launch_files* files,
+                                    int startup_fd) {
+  return redirect_standard_descriptor(files->input.fd, STDIN_FILENO, "stdin") &&
+         redirect_standard_descriptor(files->output.fd, STDOUT_FILENO,
+                                      "stdout") &&
+         redirect_standard_descriptor(files->errors.fd, STDERR_FILENO,
+                                      "stderr") &&
+         close_inherited_descriptors(startup_fd);
 }
 
-static int save_pid_file(int fd, pid_t pid, const struct stat* file_stat) {
-  // Reuse the checked descriptor instead of reopening its path.
-  if (!reset_regular_file(fd, file_stat, "pid")) {
-    return FALSE;
+// Temporarily ignores SIGPIPE so broken diagnostic pipes cannot interrupt
+// cleanup, saving the original disposition for the command.
+static bool ignore_sigpipe(struct signal_state* signals) {
+  signals->ignored_sigpipe.sa_handler = SIG_IGN;
+  if (sigemptyset(&signals->ignored_sigpipe.sa_mask) < 0 ||
+      sigaction(SIGPIPE, &signals->ignored_sigpipe,
+                &signals->original_sigpipe) < 0) {
+    perror("SIGPIPE");
+    return false;
   }
-  if (dprintf(fd, "%jd\n", (intmax_t)pid) < 0) {
-    perror("pid");
-    close(fd);
-
-    return FALSE;
-  }
-  if (close(fd) < 0) {
-    perror("pid");
-
-    return FALSE;
-  }
-  return TRUE;
+  return true;
 }
 
-static int send_process_id(int fd, pid_t pid) {
+// Sends a complete command PID before status bytes enter the startup socket,
+// retrying interruptions and partial transfers.
+static bool send_process_id(int fd, pid_t pid) {
   // A stream socket may transfer the PID in several sends.
   // MSG_NOSIGNAL lets a closed channel return an error without SIGPIPE.
   const char* data = (const char*)&pid;
@@ -221,19 +470,19 @@ static int send_process_id(int fd, pid_t pid) {
         continue;
       }
       perror("startup channel");
-
-      return FALSE;
+      return false;
     }
     if (length == 0) {
-      return FALSE;
+      return false;
     }
     sent += (size_t)length;
   }
-  return TRUE;
+  return true;
 }
 
-static int receive_process_id(int fd, pid_t* pid) {
-  // Read the complete PID before interpreting the following status byte.
+// Receives the complete PID record so subsequent status bytes cannot be
+// misinterpreted as part of the process identity.
+static bool receive_process_id(int fd, pid_t* pid) {
   char* data = (char*)pid;
   size_t received = 0;
   while (received < sizeof(*pid)) {
@@ -243,36 +492,81 @@ static int receive_process_id(int fd, pid_t* pid) {
         continue;
       }
       perror("startup channel");
-
-      return FALSE;
+      return false;
     }
     if (length == 0) {
-      return FALSE;
+      return false;
     }
     received += (size_t)length;
   }
-  return TRUE;
+  return true;
 }
 
+// Notifies the launcher after child diagnostics and cleanup are complete,
+// allowing it to distinguish a reported failure from exec closing the socket.
 static void report_startup_failure(int startup_fd) {
-  // Notify the parent even if it may already have closed the channel.
-  char failed = TRUE;
+  char failed = true;
   ssize_t written;
   do {
     written = send(startup_fd, &failed, sizeof(failed), MSG_NOSIGNAL);
   } while (written < 0 && errno == EINTR);
 }
 
+// Releases the final child only after the launcher has reaped the intermediate
+// process and saved the optional PID file.
+static bool allow_command_start(int fd) {
+  char ready = true;
+  ssize_t written;
+  do {
+    written = send(fd, &ready, sizeof(ready), MSG_NOSIGNAL);
+  } while (written < 0 && errno == EINTR);
+  if (written != sizeof(ready)) {
+    perror("startup channel");
+    return false;
+  }
+  return true;
+}
+
+// Reads one startup permission or status byte, retrying interruptions while
+// keeping EOF distinct from a communication error.
+static ssize_t read_startup_byte(int fd, char* value) {
+  ssize_t received;
+  do {
+    received = read(fd, value, sizeof(*value));
+  } while (received < 0 && errno == EINTR);
+  if (received < 0) {
+    perror("startup channel");
+  }
+  return received;
+}
+
+// Waits for the session-creating child so it cannot remain a zombie,
+// including when the caller ignores SIGCHLD.
+static bool reap_intermediate_process(pid_t pid) {
+  while (waitpid(pid, NULL, 0) < 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    // A caller that ignores SIGCHLD can have its children reaped by the OS.
+    if (errno == ECHILD) {
+      break;
+    }
+    perror("waitpid");
+    return false;
+  }
+  return true;
+}
+
+// Copies startup diagnostics through an open descriptor so a removed or
+// aliased temporary pathname does not hide the failure.
 static void print_error_log(int fd) {
-  // Read diagnostics through the descriptor, even if the path was removed.
   if (lseek(fd, 0, SEEK_SET) < 0) {
     perror("stderr");
-
     return;
   }
 
   char buffer[BUFSIZ];
-  while (TRUE) {
+  while (true) {
     ssize_t length = read(fd, buffer, sizeof(buffer));
     if (length == 0) {
       return;
@@ -282,7 +576,6 @@ static void print_error_log(int fd) {
         continue;
       }
       perror("stderr");
-
       return;
     }
     if (fwrite(buffer, 1, (size_t)length, stderr) != (size_t)length) {
@@ -291,541 +584,220 @@ static void print_error_log(int fd) {
   }
 }
 
-static void report_output_failure(pid_t pid, const char* stdout_path,
-                                  const char* stderr_path) {
-  perror("report");
-  // Keep the launch details available when stdout cannot carry the report.
-  fprintf(stderr,
-          "The command may already be running.\n"
-          "PID: %jd\n"
-          "stdout: %s\n"
-          "stderr: %s\n",
-          (intmax_t)pid, stdout_path, stderr_path);
+// Reports a failed command setup and exposes its diagnostics, either by
+// reading a temporary log or naming the selected stderr file.
+static void print_startup_error(const struct launch_files* files) {
+  fputs("Failed to start the command.\n", stderr);
+  if (files->errors.temporary) {
+    print_error_log(files->errors.fd);
+  } else if (files->output.temporary &&
+             is_same_file(&files->output.info, &files->errors.info)) {
+    // The explicitly selected stderr may alias an unlinked temporary stdout.
+    print_error_log(files->output.fd);
+  } else {
+    fprintf(stderr, "Check stderr: %s\n", files->errors.path);
+  }
 }
 
-int main(int argc, char* argv[]) {
-  const char* stdin_path = DEV_NULL_PATH;
-  const char* stdout_path = NULL;
-  const char* stderr_path = NULL;
-  const char* pid_path = NULL;
+// Attempts to preserve launch details on stderr when the normal report
+// fails, because the command may already be running.
+static void report_output_failure(pid_t pid, const struct launch_files* files) {
+  perror("report");
+  fprintf(stderr,
+          "The command may already be running.\n"
+          "PID: %jd\nstdout: %s\nstderr: %s\n",
+          (intmax_t)pid, files->output.path, files->errors.path);
+}
 
-  int opt;
-  int options_present = FALSE;
-  int separator_present = FALSE;
-  int next_argument = optind;
+// Writes and flushes the public PID and log-path report, detecting output
+// errors without deleting logs from an already started job.
+static bool print_launch_report(pid_t pid, const struct launch_files* files) {
+  // fclose checks the final buffered write as well as closing the stream.
+  if (printf("PID: %jd\nstdout: %s\nstderr: %s\n", (intmax_t)pid,
+             files->output.path, files->errors.path) < 0 ||
+      fclose(stdout) == EOF) {
+    report_output_failure(pid, files);
+    return false;
+  }
+  return true;
+}
 
-  // Suppress getopt output so we print our own errors.
-  // The colon makes a missing value return ':' instead of '?'.
-  opterr = FALSE;
-  while ((opt = getopt_long(argc, argv, "+:", long_options, NULL)) != -1) {
-    switch (opt) {
-      case 'i': {
-        stdin_path = optarg;
+// Coordinates startup from the original process: receives the PID, grants
+// execution, and reports the outcome while preserving possibly active logs.
+static int run_launcher(pid_t intermediate_pid, int startup_fd,
+                        int child_startup_fd,
+                        const struct launch_files* files) {
+  close(files->input.fd);
+  // Our copy must close so exec in the command can produce EOF on this socket.
+  close(child_startup_fd);
 
-        if (argument_is_empty(optarg)) {
-          fputs("Missing an argument for the option: --stdin\n", stderr);
-          print_usage(stderr);
-
-          return EXIT_FAILURE;
-        }
-
-        break;
-      }
-
-      case 'o': {
-        stdout_path = optarg;
-
-        if (argument_is_empty(optarg)) {
-          fputs("Missing an argument for the option: --stdout\n", stderr);
-          print_usage(stderr);
-
-          return EXIT_FAILURE;
-        }
-
-        break;
-      }
-
-      case 'e': {
-        stderr_path = optarg;
-
-        if (argument_is_empty(optarg)) {
-          fputs("Missing an argument for the option: --stderr\n", stderr);
-          print_usage(stderr);
-
-          return EXIT_FAILURE;
-        }
-
-        break;
-      }
-
-      case 'p': {
-        pid_path = optarg;
-
-        if (argument_is_empty(optarg)) {
-          fputs("Missing an argument for the option: --pid\n", stderr);
-          print_usage(stderr);
-
-          return EXIT_FAILURE;
-        }
-
-        break;
-      }
-
-      case 'h':
-        if (!print_usage(stdout)) {
-          perror("help");
-
-          return EXIT_FAILURE;
-        }
-        // Check buffered output and the final close for errors.
-        if (fclose(stdout) == EOF) {
-          perror("help");
-
-          return EXIT_FAILURE;
-        }
-
-        return EXIT_SUCCESS;
-
-      case ':':
-        fprintf(stderr, "Missing an argument for the option: %s\n",
-                argv[next_argument]);
-        print_usage(stderr);
-
-        return EXIT_FAILURE;
-
-      case '?':
-        // Grouped short options may leave optind on the current argument.
-        // Use the index saved before getopt handled that argument.
-        fprintf(stderr, "Unknown option: %s\n", argv[next_argument]);
-        print_usage(stderr);
-
-        return EXIT_FAILURE;
-
-      default:
-        fputs("Unknown option.\n", stderr);
-        print_usage(stderr);
-
-        return EXIT_FAILURE;
-    }
-
-    // Track option usage for the required separator rule.
-    options_present = TRUE;
-    next_argument = optind;
+  pid_t command_pid;
+  bool pid_received = receive_process_id(startup_fd, &command_pid);
+  if (!reap_intermediate_process(intermediate_pid)) {
+    return fail_startup(files);
+  }
+  if (!pid_received || command_pid <= 0) {
+    fputs("Failed to start the command.\n", stderr);
+    return fail_startup(files);
+  }
+  if (files->pid.path != NULL &&
+      !save_pid_file(files->pid.fd, command_pid, &files->pid.info)) {
+    return fail_startup(files);
+  }
+  if (!allow_command_start(startup_fd)) {
+    return fail_startup(files);
   }
 
-  if (optind > next_argument) {
-    if (strcmp(argv[next_argument], OPTION_SEPARATOR) == 0) {
-      separator_present = TRUE;
-    }
-  }
-
-  if (options_present && !separator_present) {
-    const char* message =
-        "Missing %s separator between detach options and the command.\n";
-    fprintf(stderr, message, OPTION_SEPARATOR);
-    print_usage(stderr);
-
-    return EXIT_FAILURE;
-  }
-
-  if (optind >= argc) {
-    fputs("Missing command to detach.\n", stderr);
-    print_usage(stderr);
-
-    return EXIT_FAILURE;
-  }
-
-  // Failed diagnostic writes must not interrupt temporary-file cleanup.
-  // Restore the caller's disposition before starting the program.
-  struct sigaction ignored_sigpipe = {0};
-  struct sigaction original_sigpipe;
-  ignored_sigpipe.sa_handler = SIG_IGN;
-  if (sigemptyset(&ignored_sigpipe.sa_mask) < 0 ||
-      sigaction(SIGPIPE, &ignored_sigpipe, &original_sigpipe) < 0) {
-    perror("SIGPIPE");
-
-    return EXIT_FAILURE;
-  }
-
-  if (!open_missing_standard_descriptors()) {
-    return EXIT_FAILURE;
-  }
-
-  // Open stdin now so alias checks use the file the child will read.
-  int fd_stdin = open(stdin_path, O_RDONLY);
-  if (fd_stdin < 0) {
-    perror("stdin");
-
-    return EXIT_FAILURE;
-  }
-
-  char stdout_template[] = "/tmp/stdout.XXXXXX";
-  char stderr_template[] = "/tmp/stderr.XXXXXX";
-  int stdout_is_temporary = FALSE;
-  int stderr_is_temporary = FALSE;
-  int failure_report_fd = -1;
-
-  // Preserve existing contents until all stream and PID aliases are checked.
-  // Open the selected stdout without O_TRUNC. Alias checks below must be able
-  // to reject conflicting files before any existing contents are destroyed.
-  int fd_stdout;
-  if (stdout_path == NULL) {
-    fd_stdout = mkstemp(stdout_template);
-    if (fd_stdout < 0) {
-      perror("stdout");
-
-      goto startup_failed;
-    }
-    stdout_path = stdout_template;
-    stdout_is_temporary = TRUE;
-  } else {
-    fd_stdout = open(stdout_path, O_CREAT | O_WRONLY, 0600);
-    if (fd_stdout < 0) {
-      perror("stdout");
-
-      goto startup_failed;
-    }
-  }
-
-  // Prepare stderr under the same preservation rule. Remember which logs we
-  // created ourselves so failure cleanup never deletes a user-selected path.
-  int fd_stderr;
-  if (stderr_path == NULL) {
-    fd_stderr = mkstemp(stderr_template);
-    if (fd_stderr < 0) {
-      perror("stderr");
-
-      goto startup_failed;
-    }
-    stderr_path = stderr_template;
-    stderr_is_temporary = TRUE;
-  } else {
-    fd_stderr = open(stderr_path, O_CREAT | O_WRONLY, 0600);
-    if (fd_stderr < 0) {
-      perror("stderr");
-
-      goto startup_failed;
-    }
-  }
-
-  struct stat stdout_stat;
-  if (fstat(fd_stdout, &stdout_stat) < 0) {
-    perror("stdout");
-
-    goto startup_failed;
-  }
-
-  struct stat stderr_stat;
-  if (fstat(fd_stderr, &stderr_stat) < 0) {
-    perror("stderr");
-
-    goto startup_failed;
-  }
-
-  int fd_pid = -1;
-  struct stat pid_stat;
-  if (pid_path != NULL) {
-    fd_pid = open(pid_path, O_CREAT | O_WRONLY, 0600);
-    if (fd_pid < 0) {
-      perror("pid");
-
-      goto startup_failed;
-    }
-    if (fstat(fd_pid, &pid_stat) < 0) {
-      perror("pid");
-
-      goto startup_failed;
-    }
-  }
-
-  struct stat stdin_stat;
-  if (fstat(fd_stdin, &stdin_stat) < 0) {
-    perror("stdin");
-
-    goto startup_failed;
-  }
-
-  // Compare open files so hard links and symlinks cannot bypass the checks.
-  // No file has been truncated yet, including the optional PID file.
-  if (pid_path != NULL) {
-    if (is_same_file(&pid_stat, &stdin_stat) ||
-        is_same_file(&pid_stat, &stdout_stat) ||
-        is_same_file(&pid_stat, &stderr_stat)) {
-      fputs("PID file must differ from stdin, stdout, and stderr.\n", stderr);
-
-      goto startup_failed;
-    }
-  }
-  // Writing to the input file would destroy unread data before exec.
-  // Devices such as /dev/null may still serve more than one stream.
-  if (S_ISREG(stdin_stat.st_mode) &&
-      (is_same_file(&stdin_stat, &stdout_stat) ||
-       is_same_file(&stdin_stat, &stderr_stat))) {
-    fputs("stdin must differ from stdout and stderr for regular files.\n",
-          stderr);
-
-    goto startup_failed;
-  }
-
-  // Reset outputs only after all file identities have been checked.
-  if (!reset_regular_file(fd_stdout, &stdout_stat, "stdout")) {
-    goto startup_failed;
-  }
-  if (!reset_regular_file(fd_stderr, &stderr_stat, "stderr")) {
-    goto startup_failed;
-  }
-
-  // Share the file offset when both streams refer to the same file.
-  if (is_same_file(&stdout_stat, &stderr_stat)) {
-    if (dup2(fd_stdout, fd_stderr) < 0) {
-      perror("stderr");
-
-      goto startup_failed;
-    }
-  }
-
-  // The final child sends its PID and waits for startup permission.
-  // After permission, it reports failure or closes the channel through exec.
-  int startup_channel[2];
-  if (socketpair(AF_UNIX, SOCK_STREAM, 0, startup_channel) < 0) {
-    perror("startup channel");
-
-    goto startup_failed;
-  }
-
-  const int parent_startup_fd = startup_channel[0];
-  const int child_startup_fd = startup_channel[1];
-
-  // Successful exec closes the child's endpoint and wakes the parent.
-  if (fcntl(child_startup_fd, F_SETFD, FD_CLOEXEC) < 0) {
-    perror("startup channel");
-
-    goto startup_failed;
-  }
-
-  // Create the intermediate process that will become the session leader.
-  pid_t intermediate_pid = fork();
-  if (intermediate_pid > 0) {
-    // This branch is the original launcher. It reports startup to the terminal
-    // while the child branch below creates the detached command.
-    // Close our copy of the child's socket endpoint so its closure can reach
-    // this parent's read as EOF after exec.
-    close(fd_stdin);
-    close(child_startup_fd);
-
-    pid_t program_pid;
-    int pid_received = receive_process_id(parent_startup_fd, &program_pid);
-
-    // Reap the intermediate process before allowing the final child to run.
-    // ECHILD also covers callers that ignore SIGCHLD.
-    while (waitpid(intermediate_pid, NULL, 0) < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == ECHILD) {
-        break;
-      }
-      perror("waitpid");
-
-      goto startup_failed;
-    }
-    if (!pid_received || program_pid <= 0) {
-      fputs("Failed to start the command.\n", stderr);
-
-      goto startup_failed;
-    }
-
-    if (pid_path != NULL) {
-      if (!save_pid_file(fd_pid, program_pid, &pid_stat)) {
-        goto startup_failed;
-      }
-    }
-
-    // Allow startup after saving the PID file, if requested.
-    // On failure, process exit closes the channel without permission.
-    char ready = TRUE;
-    ssize_t written;
-    do {
-      written = send(parent_startup_fd, &ready, sizeof(ready), MSG_NOSIGNAL);
-    } while (written < 0 && errno == EINTR);
-    if (written != sizeof(ready)) {
-      perror("startup channel");
-
-      goto startup_failed;
-    }
-
-    // EOF normally follows exec, but also occurs if the child dies.
-    // A failure byte explicitly reports a setup or exec error.
-    char failed;
-    ssize_t received;
-    do {
-      received = read(parent_startup_fd, &failed, sizeof(failed));
-    } while (received < 0 && errno == EINTR);
-    if (received < 0) {
-      perror("startup channel");
-
-      // The command may be running, so keep its logs and show the paths.
-      fprintf(stderr, "PID: %jd\nstdout: %s\nstderr: %s\n",
-              (intmax_t)program_pid, stdout_path, stderr_path);
-
-      return EXIT_FAILURE;
-    }
-    close(parent_startup_fd);
-    if (received > 0) {
-      fputs("Failed to start the command.\n", stderr);
-      if (stderr_is_temporary) {
-        print_error_log(fd_stderr);
-      } else if (stdout_is_temporary &&
-                 is_same_file(&stdout_stat, &stderr_stat)) {
-        print_error_log(fd_stdout);
-      } else {
-        fprintf(stderr, "Check stderr: %s\n", stderr_path);
-      }
-
-      goto startup_failed;
-    }
-
-    // Keep the logs on report errors because the command may be running.
-    if (printf("PID: %jd\n"
-               "stdout: %s\n"
-               "stderr: %s\n",
-               (intmax_t)program_pid, stdout_path, stderr_path) < 0) {
-      report_output_failure(program_pid, stdout_path, stderr_path);
-
-      return EXIT_FAILURE;
-    }
-
-    // Flush buffered report data and check the final close for errors.
-    if (fclose(stdout) == EOF) {
-      report_output_failure(program_pid, stdout_path, stderr_path);
-
-      return EXIT_FAILURE;
-    }
-
-    close(fd_stdout);
-    close(fd_stderr);
-
-    return EXIT_SUCCESS;
-  } else if (intermediate_pid < 0) {
-    perror("fork");
-
-    goto startup_failed;
-  }
-
-  // Only forked children reach this point. Keeping a copy of the parent's
-  // endpoint would hide its exit and leave the command waiting for permission.
-  close(parent_startup_fd);
-
-  if (pid_path != NULL) {
-    close(fd_pid);
-  }
-
-  // Create a new session before the second fork.
-  if (setsid() < 0) {
-    perror("setsid");
-    send_process_id(child_startup_fd, 0);
-
-    goto startup_failed;
-  }
-
-  // The final child inherits the session without becoming its leader.
-  // This also prevents a later ordinary open from acquiring a controlling tty.
-  pid_t program_pid = fork();
-  if (program_pid < 0) {
-    perror("fork");
-    send_process_id(child_startup_fd, 0);
-
-    goto startup_failed;
-  }
-  if (program_pid > 0) {
-    // Exit without flushing the inherited stdio buffers.
-    _exit(EXIT_SUCCESS);
-  }
-
-  // The final child sends its PID before any startup status byte.
-  if (!send_process_id(child_startup_fd, getpid())) {
-    goto startup_failed;
-  }
-
-  // EOF means the parent failed before granting startup permission.
-  char ready;
-  ssize_t received;
-  do {
-    received = read(child_startup_fd, &ready, sizeof(ready));
-  } while (received < 0 && errno == EINTR);
+  // EOF normally follows exec, but can also mean the child terminated early.
+  // Only a received failure byte proves a reported setup or exec failure.
+  char failed;
+  ssize_t received = read_startup_byte(startup_fd, &failed);
   if (received < 0) {
-    perror("startup channel");
-
-    goto child_startup_failed;
+    fprintf(stderr, "PID: %jd\nstdout: %s\nstderr: %s\n", (intmax_t)command_pid,
+            files->output.path, files->errors.path);
+    return EXIT_FAILURE;  // The command may be running: preserve its logs.
   }
-  if (received != sizeof(ready) || ready != TRUE) {
-    goto startup_failed;
+  close(startup_fd);
+  if (received > 0) {
+    print_startup_error(files);
+    return fail_startup(files);
   }
-
-  // Replace the terminal's standard streams before exec. The startup socket
-  // remains open while these steps run so any failure can reach the parent.
-  // Redirect stdin.
-  if (!redirect_standard_descriptor(fd_stdin, STDIN_FILENO, "stdin")) {
-    goto child_startup_failed;
+  if (!print_launch_report(command_pid, files)) {
+    return EXIT_FAILURE;  // Reporting failure must not remove the job's logs.
   }
+  close(files->output.fd);
+  close(files->errors.fd);
+  return EXIT_SUCCESS;
+}
 
-  // Redirect stdout.
-  if (!redirect_standard_descriptor(fd_stdout, STDOUT_FILENO, "stdout")) {
-    goto child_startup_failed;
-  }
-
-  // Redirect stderr.
-  if (!redirect_standard_descriptor(fd_stderr, STDERR_FILENO, "stderr")) {
-    goto child_startup_failed;
-  }
-
-  // Close inherited files, pipes, and sockets before starting the program.
-  if (!close_inherited_descriptors(child_startup_fd)) {
-    goto child_startup_failed;
+// Runs the final child handshake, prepares its execution state, and replaces
+// it with the command. Reported failures finish cleanup before notifying
+// the launcher.
+static int run_detached_command(char* const command[], int startup_fd,
+                                const struct launch_files* files,
+                                const struct signal_state* signals) {
+  if (!send_process_id(startup_fd, getpid())) {
+    return fail_startup(files);
   }
 
-  // Preserve the signal behavior the program would have without detach.
-  if (sigaction(SIGPIPE, &original_sigpipe, NULL) < 0) {
+  char ready;
+  ssize_t received = read_startup_byte(startup_fd, &ready);
+  if (received < 0) {
+    goto failed;
+  }
+  // EOF or an invalid byte means the parent never permitted execution.
+  if (received != sizeof(ready) || ready != true) {
+    return fail_startup(files);
+  }
+  if (!prepare_command_streams(files, startup_fd)) {
+    goto failed;
+  }
+  if (sigaction(SIGPIPE, &signals->original_sigpipe, NULL) < 0) {
     perror("SIGPIPE");
-
-    goto child_startup_failed;
+    goto failed;
   }
 
-  // Start a program in a new session on the current operating system.
-  execvp(argv[optind], &argv[optind]);
+  execvp(command[0], command);
 
-  // If exec returns, protect diagnostics and cleanup from SIGPIPE again.
+  // Failed exec returns here. Protect diagnostics from SIGPIPE again.
   int exec_error = errno;
-  if (sigaction(SIGPIPE, &ignored_sigpipe, NULL) < 0) {
-    goto child_startup_failed;
+  if (sigaction(SIGPIPE, &signals->ignored_sigpipe, NULL) < 0) {
+    goto failed;
   }
   errno = exec_error;
   perror("exec");
 
-child_startup_failed:
-  // The final child has already sent its PID. Arrange for the common cleanup
-  // below to send a failure byte after all diagnostics have been written.
-  // The launcher and intermediate child also use startup_failed, but do not
-  // send this final-child status byte.
-  // Finish cleanup before the parent starts reading the diagnostic log.
-  failure_report_fd = child_startup_fd;
-
-startup_failed:
-  // Remove only files created by mkstemp, never user-selected paths.
-  // ENOENT is harmless if the other process has already removed them.
-  if (stdout_is_temporary) {
-    if (unlink(stdout_template) < 0 && errno != ENOENT) {
-      perror(stdout_template);
-    }
-  }
-  if (stderr_is_temporary) {
-    if (unlink(stderr_template) < 0 && errno != ENOENT) {
-      perror(stderr_template);
-    }
-  }
-  // Cleanup diagnostics are complete before the parent receives the failure.
-  if (failure_report_fd >= 0) {
-    report_startup_failure(failure_report_fd);
-  }
+failed:
+  // Finish cleanup diagnostics before the launcher starts reading its log.
+  fail_startup(files);
+  report_startup_failure(startup_fd);
   return EXIT_FAILURE;
+}
+
+// Creates a terminal-independent session and forks the final command so
+// it does not become a session leader or acquire a controlling terminal.
+static int run_session_child(char* const command[], int parent_startup_fd,
+                             int startup_fd, const struct launch_files* files,
+                             const struct signal_state* signals) {
+  // Retaining the parent's endpoint would hide its exit from the command.
+  close(parent_startup_fd);
+  if (files->pid.path != NULL) {
+    close(files->pid.fd);
+  }
+  if (setsid() < 0) {
+    perror("setsid");
+    send_process_id(startup_fd, 0);
+    return fail_startup(files);
+  }
+
+  // Fork again so the command cannot acquire a controlling terminal by open.
+  pid_t command_pid = fork();
+  if (command_pid < 0) {
+    perror("fork");
+    send_process_id(startup_fd, 0);
+    return fail_startup(files);
+  }
+  if (command_pid > 0) {
+    _exit(EXIT_SUCCESS);  // Do not flush inherited stdio buffers.
+  }
+  return run_detached_command(command, startup_fd, files, signals);
+}
+
+// Creates the close-on-exec startup channel and dispatches the original
+// launcher and session-creating child into their separate process roles.
+static int launch_command(char* const command[],
+                          const struct launch_files* files,
+                          const struct signal_state* signals) {
+  int channel[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, channel) < 0) {
+    perror("startup channel");
+    return fail_startup(files);
+  }
+  int parent_fd = channel[0];
+  int child_fd = channel[1];
+  if (fcntl(child_fd, F_SETFD, FD_CLOEXEC) < 0) {
+    perror("startup channel");
+    return fail_startup(files);
+  }
+
+  pid_t intermediate_pid = fork();
+  if (intermediate_pid < 0) {
+    perror("fork");
+    return fail_startup(files);
+  }
+  if (intermediate_pid == 0) {
+    return run_session_child(command, parent_fd, child_fd, files, signals);
+  }
+  return run_launcher(intermediate_pid, parent_fd, child_fd, files);
+}
+
+// Runs the startup stages in order: parse options, protect diagnostics,
+// prepare and validate files, then launch the detached command.
+int main(int argc, char* argv[]) {
+  struct options options = {.stdin_path = DEV_NULL_PATH};
+  enum parse_result parsed = parse_arguments(argc, argv, &options);
+  if (parsed == PARSE_HELP) {
+    return show_help() ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+  if (parsed == PARSE_ERROR) {
+    return EXIT_FAILURE;
+  }
+
+  struct signal_state signals = {0};
+  if (!ignore_sigpipe(&signals) || !open_missing_standard_descriptors()) {
+    return EXIT_FAILURE;
+  }
+  struct launch_files files = {
+      .input = {.path = options.stdin_path, .fd = -1},
+      .output = {.path = options.stdout_path, .fd = -1},
+      .errors = {.path = options.stderr_path, .fd = -1},
+      .pid = {.path = options.pid_path, .fd = -1},
+      .stdout_template = "/tmp/stdout.XXXXXX",
+      .stderr_template = "/tmp/stderr.XXXXXX",
+  };
+  if (!open_launch_files(&files) || !validate_file_aliases(&files) ||
+      !prepare_output_files(&files)) {
+    return fail_startup(&files);
+  }
+  return launch_command(options.command, &files, &signals);
 }
