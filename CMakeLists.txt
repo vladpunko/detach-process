@@ -7,8 +7,12 @@ cmake_minimum_required(VERSION 3.8...3.16)
 
 project(detach C)
 
-# Create a new program on the current machine.
 add_executable(detach detach.c)
+set_target_properties(detach PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
 
 # Keep the standalone C build independent of the test dependencies.
 option(BUILD_TESTING "Build the GoogleTest integration suite" OFF)

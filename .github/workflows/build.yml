@@ -24,26 +24,18 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Step -- 1.
+      - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Step -- 2.
-        run: cc -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
+      - name: Compile standalone C99 source
+        run: cc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
 
-      - name: Step -- 3.
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build release binary
+        run: make build
 
-      - name: Step -- 4.
-        run: cmake --build build --parallel 2
-
-      - name: Step -- 5.
-        run: ctest --test-dir build --output-on-failure --parallel 2
-
-      # Instrument only the fault executable after checking the production binary.
-      - name: Configure coverage
-        if: runner.os == 'macOS'
-        run: cmake -S . -B build -DENABLE_COVERAGE=ON
+      - name: Run integration and failure tests
+        run: make test
 
       - name: Check full coverage
         if: runner.os == 'macOS'
-        run: cmake --build build --target coverage --parallel 2
+        run: make coverage

@@ -3,36 +3,32 @@
 # Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 # Created date: 2021-07-04
 
-set -o errexit
+set -e
 
 # Installation writes system directories and requires the superuser.
 if [ "$(id -u)" -ne 0 ]; then
   echo 'This program needs to be run as a superuser on the current operating system.' >&2
-  # Stop this program runtime and return the exit status code.
   exit 13
 fi
 
-workdir="$(mktemp -d)"
+build_directory="$(mktemp -d)"
 
-_cleanup() {
-  rm -f -r -- "${workdir}"
+# Removes the downloaded source and build output after success or interruption.
+cleanup() {
+  rm -f -r -- "${build_directory}"
 }
-trap _cleanup 0 1 2 3 6
+trap cleanup EXIT HUP INT QUIT ABRT
 
-# Step -- 1.
-git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-process.git "${workdir}" > /dev/null 2>&1 || {
+git clone --depth=1 --branch=master -- \
+  https://github.com/vladpunko/detach-process.git "${build_directory}" > /dev/null 2>&1 || {
   echo 'An error occurred while downloading the source code to the current machine.' >&2
-  # Stop this program runtime and return the exit status code.
   exit 1
 }
 
-# Step -- 2.
-gcc -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${workdir}/detach"
+gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter \
+  "${build_directory}/detach.c" -o "${build_directory}/detach"
 
-# Step -- 3.
 umask 022
 mkdir -p /usr/local/bin /usr/local/share/man/man1
-install -m 755 "${workdir}/detach" /usr/local/bin/detach
-
-# Step -- 4.
-install -m 644 "${workdir}/detach.1" /usr/local/share/man/man1/detach.1
+install -m 755 "${build_directory}/detach" /usr/local/bin/detach
+install -m 644 "${build_directory}/detach.1" /usr/local/share/man/man1/detach.1
