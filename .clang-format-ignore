@@ -1,0 +1,4 @@
+cmake/**
+
+# ignore generated codes
+build/**
