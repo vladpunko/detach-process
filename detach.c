@@ -381,6 +381,19 @@ static bool redirect_standard_descriptor(int source_fd, int target_fd,
   return true;
 }
 
+// Converts /dev/fd entry names to inherited descriptor numbers, returning -1
+// for invalid entries and standard streams so they are never closed.
+static int parse_descriptor_name(const char* name) {
+  char* end;
+  errno = 0;
+  intmax_t descriptor = strtoimax(name, &end, 10);
+  if (errno != 0 || end == name || *end != '\0' ||
+      descriptor <= STDERR_FILENO || descriptor > INT_MAX) {
+    return -1;
+  }
+  return (int)descriptor;
+}
+
 // Closes inherited handles before exec, preserving redirected streams and
 // the startup socket. Enumeration also finds handles above a lowered limit.
 static bool close_inherited_descriptors(int startup_fd) {
@@ -404,12 +417,8 @@ static bool close_inherited_descriptors(int startup_fd) {
       break;
     }
 
-    // Ignore nonnumeric entries, standard streams, and values outside int.
-    char* end;
-    errno = 0;
-    intmax_t fd = strtoimax(entry->d_name, &end, 10);
-    if (errno != 0 || end == entry->d_name || *end != '\0' ||
-        fd <= STDERR_FILENO || fd > INT_MAX) {
+    int fd = parse_descriptor_name(entry->d_name);
+    if (fd < 0) {
       continue;
     }
 
@@ -417,7 +426,7 @@ static bool close_inherited_descriptors(int startup_fd) {
     if (fd == dirfd(directory) || fd == startup_fd) {
       continue;
     }
-    if (close((int)fd) < 0) {
+    if (close(fd) < 0) {
       perror("close inherited descriptor");
       closedir(directory);
       return false;
