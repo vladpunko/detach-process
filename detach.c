@@ -79,7 +79,9 @@ static bool print_usage(FILE* stream) {
       "\n"
       "Notes:\n"
       "  Use %s to separate detach options from the program arguments.\n"
-      "  This is required when options are used.\n";
+      "  This is required when options are used.\n"
+      "  Reported paths escape backslashes as \\\\ and control bytes as "
+      "\\xHH.\n";
   return fprintf(stream, message, OPTION_SEPARATOR) >= 0;
 }
 
@@ -593,6 +595,38 @@ static void print_error_log(int fd) {
   }
 }
 
+// Escapes path bytes that could add report lines or control terminal output.
+// Backslashes are doubled so literal escape sequences remain distinguishable.
+static bool print_escaped_path(FILE* stream, const char* path) {
+  const unsigned char* byte = (const unsigned char*)path;
+  for (; *byte != '\0'; byte += 1) {
+    int written;
+    if (*byte == '\\') {
+      written = fputs("\\\\", stream);
+    } else if (*byte < 0x20 || *byte == 0x7f) {
+      written = fprintf(stream, "\\x%02x", (unsigned int)*byte);
+    } else {
+      written = fputc(*byte, stream);
+    }
+    if (written < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Keeps a labeled path on one line in reports and startup diagnostics.
+static bool print_path_line(FILE* stream, const char* label, const char* path) {
+  return fprintf(stream, "%s: ", label) >= 0 &&
+         print_escaped_path(stream, path) && fputc('\n', stream) != EOF;
+}
+
+// Uses the same path representation and field order for every launch report.
+static bool print_log_paths(FILE* stream, const struct launch_files* files) {
+  return print_path_line(stream, "stdout", files->output.path) &&
+         print_path_line(stream, "stderr", files->errors.path);
+}
+
 // Reports a failed command setup and exposes its diagnostics, either by
 // reading a temporary log or naming the selected stderr file.
 static void print_startup_error(const struct launch_files* files) {
@@ -604,7 +638,7 @@ static void print_startup_error(const struct launch_files* files) {
     // The explicitly selected stderr may alias an unlinked temporary stdout.
     print_error_log(files->output.fd);
   } else {
-    fprintf(stderr, "Check stderr: %s\n", files->errors.path);
+    print_path_line(stderr, "Check stderr", files->errors.path);
   }
 }
 
@@ -612,19 +646,17 @@ static void print_startup_error(const struct launch_files* files) {
 // fails, because the command may already be running.
 static void report_output_failure(pid_t pid, const struct launch_files* files) {
   perror("report");
-  fprintf(stderr,
-          "The command may already be running.\n"
-          "PID: %jd\nstdout: %s\nstderr: %s\n",
-          (intmax_t)pid, files->output.path, files->errors.path);
+  fprintf(stderr, "The command may already be running.\nPID: %jd\n",
+          (intmax_t)pid);
+  print_log_paths(stderr, files);
 }
 
 // Writes and flushes the public PID and log-path report, detecting output
 // errors without deleting logs from an already started job.
 static bool print_launch_report(pid_t pid, const struct launch_files* files) {
   // fclose checks the final buffered write as well as closing the stream.
-  if (printf("PID: %jd\nstdout: %s\nstderr: %s\n", (intmax_t)pid,
-             files->output.path, files->errors.path) < 0 ||
-      fclose(stdout) == EOF) {
+  if (printf("PID: %jd\n", (intmax_t)pid) < 0 ||
+      !print_log_paths(stdout, files) || fclose(stdout) == EOF) {
     report_output_failure(pid, files);
     return false;
   }
@@ -662,8 +694,8 @@ static int run_launcher(pid_t intermediate_pid, int startup_fd,
   char failed;
   ssize_t received = read_startup_byte(startup_fd, &failed);
   if (received < 0) {
-    fprintf(stderr, "PID: %jd\nstdout: %s\nstderr: %s\n", (intmax_t)command_pid,
-            files->output.path, files->errors.path);
+    fprintf(stderr, "PID: %jd\n", (intmax_t)command_pid);
+    print_log_paths(stderr, files);
     return EXIT_FAILURE;  // The command may be running: preserve its logs.
   }
   close(startup_fd);
