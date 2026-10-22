@@ -19,11 +19,15 @@ namespace detach_test {
 // Callers can inspect get() without taking ownership back.
 class Descriptor {
  public:
+  // Adopts a descriptor so failed assertions cannot bypass resource cleanup.
   explicit Descriptor(int fd = -1) : fd_(fd) {}
   Descriptor(const Descriptor&) = delete;
   Descriptor& operator=(const Descriptor&) = delete;
+  // Releases the owned handle when a fixture or local helper leaves scope.
   ~Descriptor();
+  // Exposes the handle for system calls while retaining ownership.
   int get() const { return fd_; }
+  // Replaces an owned descriptor without leaking or closing the same handle.
   void Reset(int fd = -1);
 
  private:
@@ -40,9 +44,11 @@ std::string ReadFile(const std::string& path);
 // The test still owns a writer, so reaching EOF is not a valid stopping
 // condition. EAGAIN means all bytes already written have been collected.
 std::string ReadAvailable(int fd);
+// Creates exact binary test input and records delayed write or close failures.
 void WriteFile(const std::string& path, const std::string& contents);
 // Checks existence and records filesystem errors instead of hiding them.
 bool FileExists(const std::string& path);
+// Reads permission bits so tests can detect unexpected mode changes.
 mode_t FileMode(const std::string& path);
 
 }  // namespace detach_test

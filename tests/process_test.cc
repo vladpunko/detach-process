@@ -4,12 +4,9 @@
 // Created date: 2026-10-21
 
 #include <fcntl.h>
-#include <signal.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -46,20 +43,6 @@ TEST_F(ProcessTest, LauncherReturnsWhileTheCommandIsStillRunning) {
   ReadProbe();
   // The probe cannot finish until the fixture closes its control socket.
   PingProbe();
-}
-
-TEST_F(ProcessTest, ReportsStartupSuccessEvenWhenTheCommandExitsWithAnError) {
-  const auto result = Run({"--", "/bin/sh", "-c", "exit 42"});
-
-  EXPECT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_GT(result.program_pid, 0);
-}
-
-TEST_F(ProcessTest, ReportsStartupSuccessEvenWhenTheCommandKillsItself) {
-  const auto result = Run({"--", "/bin/sh", "-c", "kill -TERM $$"});
-
-  EXPECT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_GT(result.program_pid, 0);
 }
 
 TEST_F(ProcessTest, LooksUpTheCommandInPath) {
@@ -172,90 +155,6 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
   EXPECT_GE(fcntl(inherited.get(), F_GETFD), 0);
 }
 
-TEST_F(ProcessTest, KeepsTheCallersDefaultSigpipeDisposition) {
-  const auto result = RunProbe();
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sigpipe_ignored, 0);
-}
-
-TEST_F(ProcessTest, KeepsTheCallersIgnoredSigpipeDisposition) {
-  LaunchOptions options;
-  options.ignored_signals = {SIGPIPE};
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sigpipe_ignored, 1);
-}
-
-TEST_F(ProcessTest, KeepsTheCallersBlockedSigpipe) {
-  LaunchOptions options;
-  options.blocked_signals = {SIGPIPE};
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sigpipe_blocked, 1);
-}
-
-TEST_F(ProcessTest, KeepsOtherBlockedSignals) {
-  LaunchOptions options;
-  options.blocked_signals = {SIGUSR1};
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sigusr1_blocked, 1);
-}
-
-TEST_F(ProcessTest, WorksWhenTheCallerIgnoresSigchld) {
-  LaunchOptions options;
-  options.ignored_signals = {SIGCHLD};
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sigchld_ignored, 1);
-}
-
-TEST_F(ProcessTest, KeepsTheCallersIgnoredSighupDisposition) {
-  LaunchOptions options;
-  options.ignored_signals = {SIGHUP};
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().sighup_ignored, 1);
-}
-
-TEST_F(ProcessTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
-  LaunchOptions options;
-  options.broken_pipes = {STDOUT_FILENO};
-  const auto result = RunProbeMode("streams", {}, {}, options);
-
-  ASSERT_EQ(result.exit_code, 1);
-  EXPECT_NE(result.error.find("The command may already be running"),
-            std::string::npos);
-  const auto state = ReadProbe();
-  EXPECT_EQ(state.pid, result.program_pid);
-  EXPECT_EQ(state.sigpipe_ignored, 0);
-  EXPECT_EQ(ReadFile(result.stdout_path), "stdout one\nstdout two\n");
-  PingProbe();
-}
-
-TEST_F(ProcessTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
-  LaunchOptions options;
-  options.broken_pipes = {STDERR_FILENO};
-  const auto result = Run({"--", Path("missing-command")}, options);
-
-  EXPECT_EQ(result.exit_code, 1);
-  EXPECT_TRUE(WIFEXITED(result.status));
-}
-
-TEST_F(ProcessTest, HelpReportsFailureWhenItsOutputCannotBeWritten) {
-  LaunchOptions options;
-  options.broken_pipes = {STDOUT_FILENO};
-  const auto result = Run({"--help"}, options);
-
-  EXPECT_NE(result.exit_code, 0);
-}
-
 TEST_F(ProcessTest, DescriptorExhaustionIsReportedAsAStartupFailure) {
   LaunchOptions options;
   options.descriptor_limit = 7;
@@ -289,6 +188,7 @@ TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
   EXPECT_EQ(ReadFile(Path("pid")), std::to_string(state.pid) + "\n");
 }
 
+// Names each closed-standard-stream combination in the test report.
 std::string ClosedDescriptorName(const testing::TestParamInfo<int>& info) {
   const char* names[] = {
       "None",   "Stdin",       "Stdout",       "StdinStdout",
@@ -299,59 +199,6 @@ std::string ClosedDescriptorName(const testing::TestParamInfo<int>& info) {
 
 INSTANTIATE_TEST_SUITE_P(StandardStreams, ClosedStandardDescriptorsTest,
                          testing::Range(1, 8), ClosedDescriptorName);
-
-class TerminalTest : public DetachTest {
- protected:
-  void SetUp() override {
-    DetachTest::SetUp();
-    if (HasFatalFailure()) {
-      return;
-    }
-    terminal_.Reset(posix_openpt(O_RDWR | O_NOCTTY));
-    ASSERT_TRUE(CheckCall(terminal_.get(), "posix_openpt"));
-    ASSERT_TRUE(
-        CheckCall(fcntl(terminal_.get(), F_SETFD, FD_CLOEXEC), "fcntl"));
-    ASSERT_TRUE(CheckCall(grantpt(terminal_.get()), "grantpt"));
-    ASSERT_TRUE(CheckCall(unlockpt(terminal_.get()), "unlockpt"));
-    char* name = ptsname(terminal_.get());
-    ASSERT_NE(name, nullptr);
-    slave_ = name;
-  }
-
-  Descriptor terminal_;
-  std::string slave_;
-};
-
-TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
-  LaunchOptions options;
-  options.terminal = slave_;
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  const auto state = ReadProbe();
-  EXPECT_EQ(state.has_terminal, 0);
-  EXPECT_NE(state.session_id, result.launcher_pid);
-  EXPECT_EQ(state.sighup_ignored, 0);
-}
-
-TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
-  LaunchOptions options;
-  options.terminal = slave_;
-  const auto result = RunProbe({}, options);
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  ReadProbe();
-  PingProbe();
-  terminal_.Reset();
-  PingProbe();
-}
-
-TEST_F(TerminalTest, OpeningATerminalDoesNotMakeItTheControllingTerminal) {
-  const auto result = RunProbeMode("terminal", {}, {slave_});
-
-  ASSERT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(ReadProbe().has_terminal, 0);
-}
 
 }  // namespace
 }  // namespace detach_test

@@ -30,6 +30,7 @@ class ProbeClient {
 
   // Receive state after the probe flushes its output, then keep it alive.
   ProbeState ReadState();
+  // Requires a reply from the running probe to verify it is still responsive.
   void Ping();
   // Release the probe and wait for its socket to close before files are
   // removed. A bounded failure path kills the owned process instead of leaving
@@ -37,7 +38,9 @@ class ProbeClient {
   void Close();
 
  private:
+  // Accepts the probe and receives its complete readiness record by a deadline.
   testing::AssertionResult ReceiveState(ProbeState& state);
+  // Releases the probe and waits for EOF before its files can be removed.
   testing::AssertionResult Stop();
 
   Descriptor listener_;

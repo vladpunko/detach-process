@@ -23,11 +23,16 @@ namespace detach_test {
 // can inspect it, then TearDown releases the probe before deleting its files.
 class DetachTest : public testing::Test {
  protected:
+  // Creates an isolated directory and listens before the detached probe starts.
   void SetUp() override;
+  // Stops the probe before removing files, including after failed assertions.
   void TearDown() override;
 
+  // Keeps each test's files within its isolated directory.
   std::string Path(const std::string& name) const;
+  // Locates the private control channel independently of redirected streams.
   std::string SocketPath() const;
+  // Builds a probe invocation with its readiness channel and selected behavior.
   std::vector<std::string> ProbeCommand(
       const std::string& mode = "state",
       const std::vector<std::string>& arguments = {}) const;
@@ -38,8 +43,7 @@ class DetachTest : public testing::Test {
   LaunchResult Run(const std::vector<std::string>& arguments,
                    const LaunchOptions& options = {});
 
-  // Starts a probe that reports process state and waits for cleanup.
-  // options belong to detach, while launch_options describe its caller.
+  // Starts a state-reporting probe and retains it for assertions and cleanup.
   LaunchResult RunProbe(const std::vector<std::string>& options = {},
                         const LaunchOptions& launch_options = {});
 

@@ -72,6 +72,8 @@ static void record_fault(const struct fault_rule* rule) {
   errno = saved_error;
 }
 
+// Loads a private copy of the injection plan so forked roles can count
+// their own operation occurrences without changing the environment.
 static void initialize_faults(void) {
   const char* plan = getenv("DETACH_TEST_FAULTS");
   if (plan == NULL) {
@@ -133,6 +135,8 @@ static void write_profile(void) {
 #endif
 }
 
+// Performs a real fork while advancing the child role and resetting its
+// fault counters and coverage filename.
 static pid_t fault_fork(void) {
   if (find_fault("fork") != NULL) {
     return -1;
@@ -160,16 +164,20 @@ static pid_t fault_fork(void) {
 
 static void fault_exit(int status) __attribute__((noreturn));
 
+// Flushes child coverage before _exit bypasses normal shutdown handlers.
 static void fault_exit(int status) {
   write_profile();
   _exit(status);
 }
 
+// Flushes setup coverage before a successful exec replaces the test code.
 static int fault_execvp(const char* file, char* const argv[]) {
   write_profile();
   return execvp(file, argv);
 }
 
+// Injects wait failures while still reaping real intermediate children
+// so a failure scenario cannot leave zombies behind.
 static pid_t fault_waitpid(pid_t pid, int* status, int options) {
   const struct fault_rule* rule = find_fault("waitpid");
   if (rule == NULL) {
@@ -184,6 +192,8 @@ static pid_t fault_waitpid(pid_t pid, int* status, int options) {
   return -1;
 }
 
+// Simulates read errors, EOF, short transfers, and invalid permissions
+// while leaving unrelated startup reads unchanged.
 static ssize_t fault_read(int fd, void* data, size_t size) {
   const struct fault_rule* rule = find_fault("read");
   if (rule != NULL) {
@@ -202,6 +212,8 @@ static ssize_t fault_read(int fd, void* data, size_t size) {
   return read(fd, data, size);
 }
 
+// Simulates failed or partial startup writes to exercise retry and
+// communication-failure handling.
 static ssize_t fault_send(int fd, const void* data, size_t size, int flags) {
   const struct fault_rule* rule = find_fault("send");
   if (rule != NULL) {
@@ -230,6 +242,8 @@ static void record_temporary(const char* path) {
   errno = saved_error;
 }
 
+// Creates and records real temporary logs, with optional alias creation
+// for cleanup tests that must survive removal of a pathname.
 static int fault_mkstemp(char* path) {
   if (find_fault("mkstemp") != NULL) {
     return -1;
@@ -247,6 +261,8 @@ static int fault_mkstemp(char* path) {
   return fd;
 }
 
+// Injects file-open failures while forwarding normal calls with the
+// correct optional creation mode.
 static int fault_open(const char* path, int flags, ...) {
   if (find_fault("open") != NULL) {
     return -1;
@@ -261,6 +277,8 @@ static int fault_open(const char* path, int flags, ...) {
   return open(path, flags);
 }
 
+// Injects descriptor-flag failures while preserving the real calling
+// convention for flag queries and updates.
 static int fault_fcntl(int fd, int command, ...) {
   if (find_fault("fcntl") != NULL) {
     return -1;
@@ -275,18 +293,23 @@ static int fault_fcntl(int fd, int command, ...) {
   return fcntl(fd, command, flags);
 }
 
+// Makes a selected descriptor close fail to exercise cleanup diagnostics.
 static int fault_close(int fd) {
   return find_fault("close") != NULL ? -1 : close(fd);
 }
 
+// Makes stream redirection or shared-offset setup fail at a chosen call.
 static int fault_dup2(int source, int target) {
   return find_fault("dup2") != NULL ? -1 : dup2(source, target);
 }
 
+// Makes file-identity inspection fail before any existing file is truncated.
 static int fault_fstat(int fd, struct stat* status) {
   return find_fault("fstat") != NULL ? -1 : fstat(fd, status);
 }
 
+// Overrides conversion errno to exercise directory-entry parsing edges
+// without inventing a descriptor or replacing the actual conversion.
 static intmax_t fault_strtoimax(const char* text, char** end, int base) {
   const struct fault_rule* rule = find_fault("strtoimax");
   intmax_t result = strtoimax(text, end, base);
@@ -296,10 +319,12 @@ static intmax_t fault_strtoimax(const char* text, char** end, int base) {
   return result;
 }
 
+// Makes truncation fail so tests can verify startup stops safely.
 static int fault_ftruncate(int fd, off_t length) {
   return find_fault("ftruncate") != NULL ? -1 : ftruncate(fd, length);
 }
 
+// Makes startup-channel creation fail before a child can be launched.
 static int fault_socketpair(int domain, int type, int protocol,
                             int channel[2]) {
   return find_fault("socketpair") != NULL
@@ -307,24 +332,30 @@ static int fault_socketpair(int domain, int type, int protocol,
              : socketpair(domain, type, protocol, channel);
 }
 
+// Makes session creation fail in the intermediate child.
 static pid_t fault_setsid(void) {
   return find_fault("setsid") != NULL ? -1 : setsid();
 }
 
+// Makes initial signal-mask setup fail before files are opened.
 static int fault_sigemptyset(sigset_t* mask) {
   return find_fault("sigemptyset") != NULL ? -1 : sigemptyset(mask);
 }
 
+// Makes signal-disposition setup or restoration fail in a selected role.
 static int fault_sigaction(int signal, const struct sigaction* action,
                            struct sigaction* previous) {
   return find_fault("sigaction") != NULL ? -1
                                          : sigaction(signal, action, previous);
 }
 
+// Makes inherited-descriptor enumeration fail before exec.
 static DIR* fault_opendir(const char* path) {
   return find_fault("opendir") != NULL ? NULL : opendir(path);
 }
 
+// Supplies a directory-read error or a synthetic entry to exercise
+// descriptor filtering deterministically.
 static struct dirent* fault_readdir(DIR* directory) {
   const struct fault_rule* rule = find_fault("readdir");
   if (rule == NULL) {
@@ -342,6 +373,8 @@ static struct dirent* fault_readdir(DIR* directory) {
   return NULL;
 }
 
+// Closes the real directory but reports a selected close error so the
+// test exercises diagnostics without leaking the enumeration handle.
 static int fault_closedir(DIR* directory) {
   const struct fault_rule* rule = find_fault("closedir");
   int result = closedir(directory);
@@ -352,14 +385,18 @@ static int fault_closedir(DIR* directory) {
   return result;
 }
 
+// Makes temporary-log removal fail so cleanup diagnostics can be checked.
 static int fault_unlink(const char* path) {
   return find_fault("unlink") != NULL ? -1 : unlink(path);
 }
 
+// Makes output rewinding or diagnostic-log seeking fail at a chosen call.
 static off_t fault_lseek(int fd, off_t offset, int origin) {
   return find_fault("lseek") != NULL ? -1 : lseek(fd, offset, origin);
 }
 
+// Closes the actual stream but can report a delayed close error to test
+// help and report flushing without leaking the stream.
 static int fault_fclose(FILE* stream) {
   const struct fault_rule* rule = find_fault("fclose");
   int result = fclose(stream);
@@ -370,6 +407,7 @@ static int fault_fclose(FILE* stream) {
   return result;
 }
 
+// Makes formatted help output fail while forwarding unrelated writes.
 static int fault_fprintf(FILE* stream, const char* format, ...) {
   if (find_fault("fprintf") != NULL) {
     return -1;
@@ -381,6 +419,7 @@ static int fault_fprintf(FILE* stream, const char* format, ...) {
   return result;
 }
 
+// Makes the normal launch report fail after the command may have started.
 static int fault_printf(const char* format, ...) {
   if (find_fault("printf") != NULL) {
     return -1;
@@ -392,6 +431,7 @@ static int fault_printf(const char* format, ...) {
   return result;
 }
 
+// Makes writing the PID file fail before execution is permitted.
 static int fault_dprintf(int fd, const char* format, ...) {
   if (find_fault("dprintf") != NULL) {
     return -1;
@@ -403,11 +443,14 @@ static int fault_dprintf(int fd, const char* format, ...) {
   return result;
 }
 
+// Makes copying startup diagnostics fail without interrupting cleanup.
 static size_t fault_fwrite(const void* data, size_t size, size_t count,
                            FILE* stream) {
   return find_fault("fwrite") != NULL ? 0 : fwrite(data, size, count, stream);
 }
 
+// Supplies unusual parser outcomes to exercise otherwise unreachable
+// CLI error paths without changing normal argument parsing.
 static int fault_getopt_long(int argc, char* const argv[], const char* options,
                              const struct option* long_options, int* index) {
   const struct fault_rule* rule = find_fault("getopt_long");
@@ -421,8 +464,8 @@ static int fault_getopt_long(int argc, char* const argv[], const char* options,
   return getopt_long(argc, argv, options, long_options, index);
 }
 
-// This translation unit alone redirects calls in the unchanged C source.
-// Production builds continue to compile detach.c directly.
+// Only this translation unit redirects calls made by detach.c.
+// Production builds compile that source directly.
 #define main utility_main
 #define fork fault_fork
 #define _exit fault_exit
@@ -457,6 +500,8 @@ static int fault_getopt_long(int argc, char* const argv[], const char* options,
 #include "detach.c"  // NOLINT(build/include)
 #undef main
 
+// Loads injection rules and runs the production CLI, or a small helper
+// for static-function edge cases that have no public CLI representation.
 int main(int argc, char* argv[]) {
   initialize_faults();
   const char* helper = getenv("DETACH_TEST_HELPER");

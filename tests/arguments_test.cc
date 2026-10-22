@@ -17,15 +17,6 @@ namespace {
 
 using ArgumentsTest = DetachTest;
 
-TEST_F(ArgumentsTest, HelpSucceedsWithoutStartingACommand) {
-  const auto result = Run({"--help"});
-
-  EXPECT_EQ(result.exit_code, 0) << result.error;
-  EXPECT_EQ(result.output.find("Usage: detach"), 0u);
-  EXPECT_TRUE(result.error.empty());
-  EXPECT_EQ(result.program_pid, -1);
-}
-
 TEST_F(ArgumentsTest, MissingCommandIsAnError) {
   const auto result = Run({});
 
@@ -161,6 +152,7 @@ TEST_P(ValueOptionTest, RequiresASeparatorBeforeTheCommand) {
   EXPECT_NE(result.error.find("Missing -- separator"), std::string::npos);
 }
 
+// Names path-option cases after the actual CLI option for clear failures.
 std::string FileOptionName(const testing::TestParamInfo<const char*>& info) {
   return std::string(info.param + 2);
 }
@@ -170,21 +162,41 @@ INSTANTIATE_TEST_SUITE_P(FileOptions, ValueOptionTest,
                                          "--pid"),
                          FileOptionName);
 
-class UnknownOptionTest : public DetachTest,
-                          public testing::WithParamInterface<const char*> {
+struct InvalidOptionCase {
+  const char* name;
+  const char* argument;
+};
+
+class UnknownOptionTest
+    : public DetachTest,
+      public testing::WithParamInterface<InvalidOptionCase> {
 };
 
 TEST_P(UnknownOptionTest, ReportsTheOriginalArgument) {
-  const auto result = Run({GetParam()});
+  const auto result = Run({GetParam().argument});
 
   EXPECT_EQ(result.exit_code, 1);
-  EXPECT_NE(result.error.find(std::string("Unknown option: ") + GetParam()),
-            std::string::npos);
+  EXPECT_NE(
+      result.error.find(std::string("Unknown option: ") + GetParam().argument),
+      std::string::npos);
+}
+
+const InvalidOptionCase kInvalidOptions[] = {
+    {"UnknownLongOption", "--unknown"},
+    {"AmbiguousLongOption", "--std"},
+    {"ShortOption", "-h"},
+    {"GroupedShortOptions", "-ho"},
+    {"HelpWithValue", "--help=unexpected"},
+};
+
+// Uses each invalid-input scenario name instead of a numeric test index.
+std::string InvalidOptionName(
+    const testing::TestParamInfo<InvalidOptionCase>& info) {
+  return info.param.name;
 }
 
 INSTANTIATE_TEST_SUITE_P(InvalidOptions, UnknownOptionTest,
-                         testing::Values("--unknown", "--std", "-h", "-ho",
-                                         "--help=unexpected"));
+                         testing::ValuesIn(kInvalidOptions), InvalidOptionName);
 
 }  // namespace
 }  // namespace detach_test

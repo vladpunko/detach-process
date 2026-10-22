@@ -21,6 +21,7 @@
 
 #include "tests/probe_state.h"
 
+// Completes a binary write so partial transfers cannot corrupt probe data.
 static int write_all(int fd, const void* buffer, size_t size) {
   const char* data = buffer;
   while (size > 0) {
@@ -37,10 +38,13 @@ static int write_all(int fd, const void* buffer, size_t size) {
   return 1;
 }
 
+// Sends a complete text marker for deterministic stream assertions.
 static int write_text(int fd, const char* text) {
   return write_all(fd, text, strlen(text));
 }
 
+// Copies input byte-for-byte and emits an error-stream marker to verify
+// that all three command streams were redirected independently.
 static int copy_stdin(void) {
   char buffer[4096];
   while (1) {
@@ -60,6 +64,7 @@ static int copy_stdin(void) {
   }
 }
 
+// Identifies /dev/null by file identity rather than by an assumed path.
 static int is_null_input(void) {
   struct stat input;
   struct stat null_device;
@@ -70,6 +75,8 @@ static int is_null_input(void) {
          input.st_ino == null_device.st_ino;
 }
 
+// Counts inherited handles outside the probe channel and standard streams
+// so tests can detect descriptor leaks in the launched command.
 static int extra_descriptors(int channel) {
   DIR* directory = opendir("/dev/fd");
   if (directory == NULL) {
@@ -97,6 +104,7 @@ static int extra_descriptors(int channel) {
   return closedir(directory) == 0 ? count : -1;
 }
 
+// Reads a signal disposition so tests can verify the caller state survived.
 static int signal_ignored(int signal) {
   struct sigaction action;
   if (sigaction(signal, NULL, &action) < 0) {
@@ -153,6 +161,7 @@ static int run_mode(int argc, char* argv[]) {
          strcmp(mode, "pid-file") == 0;
 }
 
+// Opens a private control channel independent of the streams under test.
 static int connect_to_test(const char* path) {
   int channel = socket(AF_UNIX, SOCK_STREAM, 0);
   if (channel < 0) {
@@ -172,6 +181,8 @@ static int connect_to_test(const char* path) {
   return channel;
 }
 
+// Records the real process, stream, and signal state after command I/O
+// so tests can compare the launch report with the actual running process.
 static int capture_state(int channel, int argc, char* argv[],
                          ProbeState* state) {
   int terminal = open("/dev/tty", O_RDWR | O_NOCTTY);
@@ -235,6 +246,8 @@ static int capture_state(int channel, int argc, char* argv[],
          state->sigchld_ignored >= 0 && state->sighup_ignored >= 0;
 }
 
+// Keeps the probe alive for assertions and answers liveness checks until
+// the fixture releases it.
 static int wait_for_test(int channel) {
   // Stay alive until the test closes the socket, answering liveness checks.
   char command;
@@ -253,6 +266,8 @@ static int wait_for_test(int channel) {
   return 1;
 }
 
+// Runs the selected probe behavior, reports readiness, and waits for cleanup
+// with a bounded lifetime if a regression prevents normal shutdown.
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     return EXIT_FAILURE;

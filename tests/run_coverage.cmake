@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Runs one coverage step and stops immediately if it fails, preventing later
+# reports from hiding a failed test or tool invocation.
 function(run_checked)
     execute_process(COMMAND ${ARGV}
         WORKING_DIRECTORY "${BUILD_DIR}"

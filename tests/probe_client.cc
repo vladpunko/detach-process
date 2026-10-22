@@ -31,6 +31,8 @@ using Clock = std::chrono::steady_clock;
 using Milliseconds = std::chrono::milliseconds;
 constexpr auto kTimeout = std::chrono::seconds(5);
 
+// Waits for probe I/O within one deadline so interrupted polls cannot
+// extend a failed test indefinitely.
 testing::AssertionResult WaitReadable(int fd, Clock::time_point deadline) {
   while (Clock::now() < deadline) {
     // Recalculate after every interruption so signals cannot restart the full

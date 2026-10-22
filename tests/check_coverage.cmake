@@ -15,6 +15,8 @@ if(NOT source_count EQUAL 1 OR NOT sources MATCHES "/detach[.]c$")
     message(FATAL_ERROR "The report must contain only detach.c")
 endif()
 
+# Rejects missing, empty, or partially covered metrics so a successful run must
+# prove complete coverage rather than merely produce an LCOV file.
 function(require_full_coverage label found_key hit_key)
     string(REGEX MATCH "(^|\n)${found_key}:([0-9]+)" found "${coverage}")
     set(total "${CMAKE_MATCH_2}")

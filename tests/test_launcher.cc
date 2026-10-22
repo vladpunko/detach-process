@@ -64,6 +64,8 @@ void PrepareTerminal(const std::string& path) {
   close(controlling_terminal);
 }
 
+// Installs caller signal state in the forked launcher without changing the
+// runner's own dispositions or signal mask.
 void ConfigureSignals(const LaunchOptions& options) {
   struct sigaction action = {};
   RequireChildCall(sigemptyset(&action.sa_mask), "test signal mask");
@@ -88,6 +90,8 @@ void ConfigureSignals(const LaunchOptions& options) {
                    "set blocked signals");
 }
 
+// Creates streams with no readers so tests provoke real EPIPE and SIGPIPE
+// behavior without breaking the runner's standard streams.
 void BreakPipes(const std::vector<int>& descriptors) {
   for (int fd : descriptors) {
     int channel[2];

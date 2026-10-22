@@ -37,54 +37,16 @@ set_target_properties(detach_faults PROPERTIES
     C_EXTENSIONS NO
 )
 
-option(ENABLE_COVERAGE "Instrument detach.c with Clang source coverage" OFF)
-if(ENABLE_COVERAGE)
-    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
-        message(FATAL_ERROR "ENABLE_COVERAGE requires Clang")
-    endif()
-
-    get_filename_component(compiler_directory "${CMAKE_C_COMPILER}" DIRECTORY)
-    set(llvm_tool_directories "${compiler_directory}")
-    if(APPLE)
-        execute_process(COMMAND xcrun --find llvm-profdata
-            OUTPUT_VARIABLE apple_profdata
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            RESULT_VARIABLE xcrun_status
-        )
-        if(xcrun_status EQUAL 0)
-            get_filename_component(apple_tool_directory "${apple_profdata}" DIRECTORY)
-            list(APPEND llvm_tool_directories "${apple_tool_directory}")
-        endif()
-    endif()
-    string(REGEX MATCH "^[0-9]+" clang_major "${CMAKE_C_COMPILER_VERSION}")
-    find_program(LLVM_PROFDATA NAMES llvm-profdata-${clang_major} llvm-profdata
-        HINTS ${llvm_tool_directories}
-        NAMES_PER_DIR
-    )
-    find_program(LLVM_COV NAMES llvm-cov-${clang_major} llvm-cov
-        HINTS ${llvm_tool_directories}
-        NAMES_PER_DIR
-    )
-    if(NOT LLVM_PROFDATA OR NOT LLVM_COV)
-        message(FATAL_ERROR
-            "Coverage requires llvm-profdata and llvm-cov matching Clang. "
-            "Set LLVM_PROFDATA and LLVM_COV to their paths if needed."
-        )
-    endif()
-
-    target_compile_definitions(detach_faults PRIVATE DETACH_TEST_COVERAGE=1)
-    target_compile_options(detach_faults PRIVATE
-        -fprofile-instr-generate -fcoverage-mapping
-    )
-    target_link_options(detach_faults PRIVATE -fprofile-instr-generate)
-    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/profiles")
-endif()
-
 add_executable(detach_tests
     arguments_test.cc
     files_test.cc
-    failures_test.cc
+    file_aliases_test.cc
+    output_test.cc
     process_test.cc
+    signals_test.cc
+    terminal_test.cc
+    failures_test.cc
+    fault_test.cc
     probe_client.cc
     test_files.cc
     test_launcher.cc
@@ -117,20 +79,7 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(detach_tests NO_PRETTY_VALUES PROPERTIES TIMEOUT 20)
 
+option(ENABLE_COVERAGE "Instrument detach.c with Clang source coverage" OFF)
 if(ENABLE_COVERAGE)
-    add_custom_target(coverage
-        COMMAND "${CMAKE_COMMAND}"
-            "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
-            "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-            "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-            "-DFAULT_EXECUTABLE=$<TARGET_FILE:detach_faults>"
-            "-DLLVM_PROFDATA=${LLVM_PROFDATA}"
-            "-DLLVM_COV=${LLVM_COV}"
-            "-DCONFIG=$<CONFIG>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/run_coverage.cmake"
-        DEPENDS detach_tests
-        COMMENT "Run tests and require 100% coverage of detach.c"
-        USES_TERMINAL
-        VERBATIM
-    )
+    include("${CMAKE_CURRENT_SOURCE_DIR}/coverage.cmake")
 endif()
