@@ -67,7 +67,7 @@ static const struct option long_options[] = {
 
 // Writes the shared CLI reference used by help and argument diagnostics.
 static bool print_usage(FILE* stream) {
-  const char* message =
+  const char message[] =
       "Usage: detach [OPTIONS] -- program [ARGS...]\n"
       "\n"
       "Options:\n"
