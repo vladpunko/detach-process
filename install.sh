@@ -3,32 +3,46 @@
 # Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
 # Created date: 2021-07-04
 
-set -e
+set -o errexit
 
-# Installation writes system directories and requires the superuser.
+# Exit if this script is not run as the superuser.
 if [ "$(id -u)" -ne 0 ]; then
   echo 'This program needs to be run as a superuser on the current operating system.' >&2
+  # Stop this program runtime and return the exit status code.
   exit 13
 fi
 
-build_directory="$(mktemp -d)"
+workdir="$(mktemp -d)"
 
 # Removes the downloaded source and build output after success or interruption.
-cleanup() {
-  rm -f -r -- "${build_directory}"
+_cleanup() {
+  rm -f -r -- "${workdir}"
 }
-trap cleanup EXIT HUP INT QUIT ABRT
+trap _cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 134' ABRT
+trap 'exit 143' TERM
 
-git clone --depth=1 --branch=master -- \
-  https://github.com/vladpunko/detach-process.git "${build_directory}" > /dev/null 2>&1 || {
+# Step -- 1.
+git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-process.git "${workdir}" > /dev/null 2>&1 || {
   echo 'An error occurred while downloading the source code to the current machine.' >&2
+  # Stop this program runtime and return the exit status code.
   exit 1
 }
 
-gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter \
-  "${build_directory}/detach.c" -o "${build_directory}/detach"
+# Step -- 2.
+gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${workdir}/detach"
 
+# Step -- 3.
 umask 022
-mkdir -p /usr/local/bin /usr/local/share/man/man1
-install -m 755 "${build_directory}/detach" /usr/local/bin/detach
-install -m 644 "${build_directory}/detach.1" /usr/local/share/man/man1/detach.1
+install -d -m 755 /usr/local/bin
+install -m 755 "${workdir}/detach" /usr/local/bin/detach
+
+# Step -- 4.
+install -d -m 755 /usr/local/share/man/man1
+chmod 755 /usr/local/share \
+          /usr/local/share/man \
+          /usr/local/share/man/man1
+install -m 644 "${workdir}/detach.1" /usr/local/share/man/man1/detach.1
