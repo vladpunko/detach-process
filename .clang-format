@@ -9,26 +9,29 @@ TabWidth: 4
 # The number of columns to use for indentation.
 IndentWidth: 4
 
+# Preserve manual line breaks instead of wrapping at a fixed width.
+ColumnLimit: 0
+
 # The way to use tab characters in the resulting file.
 UseTab: Never
 
 # Pointer and reference alignment style.
 PointerAlignment: Left
 
-# The extra indent or outdent of access modifiers.
-AccessModifierOffset: 0
+# Align access modifiers with the class declaration.
+AccessModifierOffset: -4
 
 # Keep empty test fixtures on multiple lines.
 AllowShortRecordOnASingleLine: Never
 
-# Keep function definitions on multiple lines, including empty functions.
-AllowShortFunctionsOnASingleLine: None
+# Keep empty functions on a single line.
+AllowShortFunctionsOnASingleLine: Empty
 
 # Ensure the file ends with a newline.
 InsertNewlineAtEOF: true
 
-# Indent the contents of all namespaces, including nested namespaces.
-NamespaceIndentation: All
+# Do not indent namespace contents.
+NamespaceIndentation: None
 
 # Leave namespace closing comments unchanged.
 FixNamespaceComments: false
