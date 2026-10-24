@@ -36,8 +36,7 @@ private:
 };
 
 // Checks a system call result so test assertions show the operation and error.
-[[nodiscard]] testing::AssertionResult CheckSysCall(int status,
-                                                    const char* operation);
+[[nodiscard]] testing::AssertionResult CheckSysCall(int status, const char* operation);
 
 std::string Read(const std::string& path);
 void Write(const std::string& path, const std::string& contents);

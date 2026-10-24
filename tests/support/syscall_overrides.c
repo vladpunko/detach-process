@@ -604,7 +604,7 @@ static int fault_getopt_long(int argc,
 #define dprintf fault_dprintf
 #define fwrite fault_fwrite
 #define getopt_long fault_getopt_long
-#include "detach.c"  // NOLINT(build/include)
+#include "detach.c"
 #undef main
 
 // Loads injection rules and runs the production CLI, or a small helper
