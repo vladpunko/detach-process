@@ -4,7 +4,7 @@
 // Created date: 2021-07-04
 
 #define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE
 
 #include <dirent.h>

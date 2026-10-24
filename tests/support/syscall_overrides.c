@@ -4,7 +4,7 @@
 // Created date: 2026-10-21
 
 #define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE
 
 // Simulates system call failures to test how `detach` handles them.
