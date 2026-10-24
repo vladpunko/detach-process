@@ -12,7 +12,7 @@ Detaching a long-running command usually means juggling `nohup`, backgrounding, 
 
 ## Installation
 
-Requirements: Linux or macOS with [git](https://git-scm.com/downloads), a C99 compiler such as [gcc](https://gcc.gnu.org/install), and `install`. For the one-line installer you also need [curl](https://curl.se/download.html), `sudo`, [make](https://www.gnu.org/software/make/), [cmake](https://cmake.org/download/), and a [C++20 compiler](https://gcc.gnu.org/projects/cxx-status.html#cxx20).
+Building and installing `detach` requires Linux or macOS, [git](https://git-scm.com/downloads), a C99 compiler such as [gcc](https://gcc.gnu.org/install), and `install`. The one-line installer also requires [curl](https://curl.se/download.html), `sudo`, [make](https://www.gnu.org/software/make/), [cmake](https://cmake.org/download/), and a C++ compiler with [C++20 support](https://gcc.gnu.org/projects/cxx-status.html#cxx20) for the tests.
 
 To install this package as a standalone application with the command-line interface you are to run the following command:
 
