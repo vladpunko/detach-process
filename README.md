@@ -17,7 +17,8 @@ Building and installing `detach` requires Linux or macOS, [git](https://git-scm.
 To install this package as a standalone application with the command-line interface you are to run the following command:
 
 ```bash
-sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh)"
+sudo sh -c "$(curl -fsSL \
+  https://raw.githubusercontent.com/vladpunko/detach-process/d7b4f6f/install.sh)"
 ```
 
 The install script defaults to `/usr/local/bin` for the binary and `/usr/local/share/man/man1` for the man page.
