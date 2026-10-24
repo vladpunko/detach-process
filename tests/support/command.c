@@ -5,6 +5,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -31,6 +32,7 @@ static int report_system_error(const char* operation) {
 // Completes a binary write so partial transfers cannot corrupt probe data.
 static int write_all(int fd, const void* buffer, size_t size) {
     const char* data = buffer;
+
     while (size > 0) {
         ssize_t length = write(fd, data, size);
         if (length < 0 && errno == EINTR) {
@@ -43,9 +45,11 @@ static int write_all(int fd, const void* buffer, size_t size) {
             fputs("cannot write command data: no bytes were written\n", stderr);
             return 0;
         }
+
         data += length;
         size -= (size_t)length;
     }
+
     return 1;
 }
 
@@ -58,6 +62,7 @@ static int write_text(int fd, const char* text) {
 // that all three command streams were redirected independently.
 static int copy_stdin(void) {
     char buffer[4096];
+
     while (1) {
         ssize_t length = read(STDIN_FILENO, buffer, sizeof(buffer));
         if (length < 0 && errno == EINTR) {
@@ -87,6 +92,7 @@ static int is_null_input(void) {
         report_system_error("cannot inspect /dev/null");
         return -1;
     }
+
     return input.st_dev == null_device.st_dev && input.st_ino == null_device.st_ino;
 }
 
@@ -98,6 +104,7 @@ static int extra_descriptors(int channel) {
         report_system_error("cannot list open descriptors");
         return -1;
     }
+
     int count = 0;
     while (1) {
         // Only a clean end of directory proves there were no extra handles.
@@ -110,6 +117,7 @@ static int extra_descriptors(int channel) {
             }
             break;
         }
+
         char* end;
         errno = 0;
         intmax_t fd = strtoimax(entry->d_name, &end, 10);
@@ -118,20 +126,23 @@ static int extra_descriptors(int channel) {
             count += 1;
         }
     }
+
     if (closedir(directory) < 0) {
         report_system_error("cannot close descriptor directory");
         return -1;
     }
+
     return count;
 }
 
 // Reads a signal disposition so tests can verify the caller state survived.
-static int signal_ignored(int signal) {
+static int signal_ignored(int signal_number) {
     struct sigaction action;
-    if (sigaction(signal, NULL, &action) < 0) {
+    if (sigaction(signal_number, NULL, &action) < 0) {
         report_system_error("cannot read signal disposition");
         return -1;
     }
+
     return action.sa_handler == SIG_IGN;
 }
 
@@ -167,13 +178,11 @@ static int read_pid_file(const char* path, int64_t* pid) {
         return report_system_error("cannot open pid file");
     }
 
-    intmax_t value = -1;
-    if (fscanf(file, "%" SCNdMAX, &value) != 1) {
-        if (ferror(file)) {
-            report_system_error("cannot read pid file");
-        } else {
-            fprintf(stderr, "invalid pid file: %s\n", path);
-        }
+    // Reject oversized PID files rather than accepting a truncated number.
+    char text[64] = {0};
+    const size_t length = fread(text, 1, sizeof(text) - 1, file);
+    if (ferror(file)) {
+        report_system_error("cannot read pid file");
         fclose(file);
         return 0;
     }
@@ -181,6 +190,21 @@ static int read_pid_file(const char* path, int64_t* pid) {
     if (fclose(file) == EOF) {
         return report_system_error("cannot close pid file");
     }
+
+    char* end;
+    errno = 0;
+    const intmax_t value = strtoimax(text, &end, 10);
+    const int invalid_number =
+        errno != 0 || end == text || value <= 0 || value > INT64_MAX;
+
+    while (end < text + length && isspace((unsigned char)*end)) {
+        end += 1;
+    }
+    if (invalid_number || end != text + length || length == sizeof(text) - 1) {
+        fprintf(stderr, "invalid pid file: %s\n", path);
+        return 0;
+    }
+
     *pid = (int64_t)value;
     return 1;
 }
@@ -190,6 +214,7 @@ static int require_mode_argument(int argc, const char* mode) {
     if (argc == 4) {
         return 1;
     }
+
     fprintf(stderr, "expected one argument for mode: %s\n", mode);
     return 0;
 }
@@ -223,14 +248,17 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
         if (!require_mode_argument(argc, mode)) {
             return 0;
         }
+
         const char* value = getenv(argv[3]);
         if (value == NULL) {
             fprintf(stderr, "environment variable is not set: %s\n", argv[3]);
             return 0;
         }
+
         if (fputs(value, stdout) == EOF) {
             return report_system_error("cannot write environment value");
         }
+
         return 1;
     }
 
@@ -239,10 +267,12 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
         if (directory == NULL) {
             return report_system_error("cannot read working directory");
         }
+
         int written = fputs(directory, stdout);
         if (written == EOF) {
             report_system_error("cannot write working directory");
         }
+
         free(directory);
         return written >= 0;
     }
@@ -251,14 +281,17 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
         if (!require_mode_argument(argc, mode)) {
             return 0;
         }
+
         // A second fork prevents an ordinary open from acquiring this terminal.
         int fd = open(argv[3], O_RDWR);
         if (fd < 0) {
             return report_system_error("cannot open command terminal");
         }
+
         if (close(fd) < 0) {
             return report_system_error("cannot close command terminal");
         }
+
         return 1;
     }
 
@@ -266,6 +299,7 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
         if (!require_mode_argument(argc, mode)) {
             return 0;
         }
+
         state->descriptor_open = check_descriptor(argv[3]);
         return state->descriptor_open >= 0;
     }
@@ -274,6 +308,7 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
         if (!require_mode_argument(argc, mode)) {
             return 0;
         }
+
         return read_pid_file(argv[3], &state->pid_file);
     }
 
@@ -291,6 +326,7 @@ static int connect_to_test(const char* path) {
     if (channel < 0) {
         return -1;
     }
+
     struct sockaddr_un address = {0};
     address.sun_family = AF_UNIX;
     if (strlen(path) >= sizeof(address.sun_path)) {
@@ -353,9 +389,9 @@ static int capture_state(int channel, ProbeState* state) {
 // Keeps the probe alive for assertions and answers liveness checks until
 // the fixture releases it.
 static int wait_for_test(int channel) {
-    // Stay alive until the test closes the socket, answering liveness checks.
     char command;
     ssize_t length;
+
     while ((length = read(channel, &command, 1)) != 0) {
         if (length < 0) {
             if (errno == EINTR) {
@@ -377,6 +413,7 @@ int main(int argc, char* argv[]) {
         fputs("usage: command mode socket-path [arguments]\n", stderr);
         return EXIT_FAILURE;
     }
+
     // Bounds the command lifetime if its scenario or control connection stalls.
     alarm(15);
     ProbeState state = {.descriptor_open = -1, .pid_file = -1};
@@ -393,6 +430,7 @@ int main(int argc, char* argv[]) {
         report_system_error("cannot connect to test socket");
         return EXIT_FAILURE;
     }
+
     // The socket is the readiness barrier, then remains open for liveness.
     int success = capture_state(channel, &state) &&
                   write_all(channel, &state, sizeof(state)) && wait_for_test(channel);
