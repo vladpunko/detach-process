@@ -1,32 +1,64 @@
-<div align="center">
-
 # detach-process
 
-**Run a command. Close the terminal. Keep it running.**
+![build](https://github.com/vladpunko/detach-process/actions/workflows/build.yml/badge.svg)
 
-[![Build](https://github.com/vladpunko/detach-process/actions/workflows/build.yml/badge.svg)](https://github.com/vladpunko/detach-process/actions/workflows/build.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+Spawn a new process and detach it from the current interactive session.
 
-[Quick start](#quick-start) · [Installation](#installation) · [Usage](#usage) · [Behavior](#behavior) · [Development](#development)
+![usage-example](https://raw.githubusercontent.com/vladpunko/detach-process/master/detach.gif)
 
-</div>
+## Motivation
 
-`detach` starts a command in its own session, connects its standard streams to files, and returns control to your shell. The command can keep running after the terminal closes. Works on **Linux and macOS**.
+Detaching a long-running command usually means juggling `nohup`, backgrounding, `disown`, and redirections. This tool simplifies that workflow into one predictable command and reports the PID and output paths for easy scripting.
 
-Use it for a download, a script, or another job you want to leave running. It launches the job once; it does not monitor or restart it.
+## Installation
 
-<p align="center">
-  <img src="detach.gif" alt="Launching a detached command from the terminal" width="720">
-</p>
+Requirements: Linux or macOS with [git](https://git-scm.com/downloads), a C99 compiler such as [gcc](https://gcc.gnu.org/install), and `install`. For the one-line installer you also need [curl](https://curl.se/download.html) and `sudo`.
 
-## Quick start
+To install this package as a standalone application with the command-line interface you are to run the following command:
 
-Start a command after [installing detach](#installation):
-
-```sh
-detach -- sleep 3600
+```bash
+sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/master/install.sh)"
 ```
 
-The launcher prints three lines and returns immediately:
+The install script defaults to `/usr/local/bin` for the binary and `/usr/local/share/man/man1` for the man page.
+
+You can also install this system package on your working machine (works for unix-like operating systems) from source code to a system location:
+
+```bash
+# Step -- 1.
+git clone --depth=1 --branch=master https://github.com/vladpunko/detach-process.git
+
+# Step -- 2.
+cd ./detach-process/
+
+# Step -- 3.
+gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
+
+# Step -- 4.
+sudo mkdir -p /usr/local/bin /usr/local/share/man/man1
+sudo install -m 755 detach /usr/local/bin/detach
+sudo install -m 644 detach.1 /usr/local/share/man/man1/detach.1
+```
+
+## Uninstall
+
+If you installed to the default paths, remove the binary and the man page:
+
+```bash
+sudo rm -f /usr/local/bin/detach /usr/local/share/man/man1/detach.1
+```
+
+If you installed to a different location, remove those files instead.
+
+## Basic usage
+
+Using this program allows you to create a new detached process avoiding complex shell pipelines in the current interactive session. It protects you from the trouble of closing an application which is the parent process of a different program.
+
+```bash
+detach ping -c 10 google.com  # pgrep ping | xargs ps -p
+```
+
+The launcher prints the command's process ID and log paths, then returns control to your shell. For example:
 
 ```text
 PID: 12345
@@ -34,113 +66,71 @@ stdout: /tmp/stdout.aB3xYz
 stderr: /tmp/stderr.cD4wUv
 ```
 
-The PID and generated paths vary. Follow the printed log paths with `tail -f`, or choose your own files:
+Use `--` to separate detach's options from the command you want to run. This is required when options are used.
 
-```sh
-detach --pid job.pid --stdout job.out --stderr job.err -- /bin/sh job.sh
-tail -f job.out job.err
+You can write the PID and the standard output and error to specific files:
+
+```bash
+detach --pid ping.pid --stdout ping.out --stderr ping.err -- ping -c 10 google.com
+
+tail -f ping.out ping.err
 ```
 
-## Installation
+Use the standard input from a file:
 
-Building requires a C99 compiler. The commands below also use Make and CMake 3.16+. At runtime, `/dev/fd` must be accessible; on Linux it usually points to `/proc/self/fd`.
-
-```sh
-git clone --depth=1 https://github.com/vladpunko/detach-process.git
-cd detach-process
-make build
-./build/release/detach --help
+```bash
+detach --stdin README.md --stdout cat.out -- cat
 ```
 
-Install the binary and manual page:
+Show usage:
 
-```sh
-sudo mkdir -p /usr/local/bin /usr/local/share/man/man1
-sudo install -m 755 build/release/detach /usr/local/bin/detach
-sudo install -m 644 detach.1 /usr/local/share/man/man1/detach.1
+```bash
+detach --help
 ```
 
-<details>
-<summary>Other installation methods and uninstall</summary>
-
-**Compile directly.** The utility is a single C source file; this build needs neither Make nor CMake:
-
-```sh
-cc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
-./detach --help
-```
-
-Use `detach` as the source path in the binary installation command above.
-
-**Use the installer.** From the cloned repository, run `sudo sh install.sh`. The [script](install.sh) downloads the `master` branch, compiles it with `gcc`, and installs the binary and manual page under `/usr/local`. It requires `git`, `gcc`, and `install`.
-
-**Uninstall:**
-
-```sh
-sudo rm -f /usr/local/bin/detach /usr/local/share/man/man1/detach.1
-```
-
-</details>
-
-## Usage
+## Options
 
 ```text
 detach [OPTIONS] -- program [ARGS...]
+
+  --stdin FILE   read the standard input from FILE
+  --stdout FILE  write the standard output to FILE
+  --stderr FILE  write the standard error to FILE
+  --pid FILE     write the program's process ID to FILE
+  --help         show this help message and exit
 ```
 
-Use `--` to separate detach's options from the program's arguments. The separator is required when file options are used.
-
-| Option | Meaning |
-| --- | --- |
-| `--stdin FILE` | Read input from `FILE` instead of `/dev/null`. |
-| `--stdout FILE` | Write output to `FILE` instead of a unique file in `/tmp`. |
-| `--stderr FILE` | Write errors to `FILE` instead of a unique file in `/tmp`. |
-| `--pid FILE` | Save the command's PID before the command starts. |
-| `--help` | Show help and exit. |
-
-**Combine output and errors in one log:**
-
-```sh
-detach --stdout job.log --stderr job.log -- /bin/sh job.sh
-```
-
-**Read input from a file:**
-
-```sh
-detach --stdin input.txt --stdout output.txt -- sort
-```
-
-**Run a pipeline:**
-
-```sh
-detach -- /bin/sh -c 'printf "hello\n" | tr a-z A-Z'
-```
-
-Arguments go directly to the program. Pass an explicit shell for pipelines and other shell syntax. Executable scripts need a shebang such as `#!/bin/sh`, or an explicit interpreter as in the examples above.
+By default, standard input comes from `/dev/null`, and standard output and error go to separate temporary files in `/tmp`. Existing regular output and PID files are overwritten. Standard output and error can share one file.
 
 ## Behavior
 
-- **Files:** existing regular output and PID files are truncated. There is no append mode. Logs remain after the command exits; remove them when finished.
-- **File conflicts:** stdout and stderr may share a file. A regular input file must differ from both outputs. The PID file must differ from all streams. Checks include hard links and symlinks and run before truncation.
-- **Caller state:** the command keeps the working directory, environment, and file creation mask. Relative paths resolve from that directory.
-- **Exit status:** `0` means no startup error was reported; a nonzero status means an error occurred. This is the launcher's status, not the job's eventual result.
+- Exit status `0` means no startup error was reported. It does not describe the command's eventual result.
+- The command keeps the working directory, environment, and file creation mask. Relative paths resolve from that directory.
+- A regular input file must differ from both outputs, and the PID file must differ from all streams. These checks include hard links and symlinks.
+- Logs remain after the command exits. Remove them when they are no longer needed.
 
-Startup diagnostics go to the terminal or the selected stderr file. A failure while printing the launch report can occur after the job has already started. An abrupt termination before `exec` can close the startup channel without reporting an error.
+![detach process flow](detach-process-spawn.png)
 
-See `man detach` for the command reference and [How it works](docs/design.md) for session creation, file handling, and startup coordination.
+## Contributing
 
-## Development
+Pull requests are welcome. Please open an issue first to discuss what should be changed.
 
-```sh
-make build
-make test
+Please make sure this system package works without errors.
+
+```bash
+# Step -- 1.
+python3 -m venv .venv && source ./.venv/bin/activate && pip install cpplint pre-commit
+
+# Step -- 2.
+pre-commit install --config .githooks.yml
+
+# Step -- 3.
+cpplint detach.c tests/cases/*.cc tests/support/*.{c,cc,h}
+
+# Step -- 4.
 make coverage
 ```
 
-`make` defaults to `make build`. Tests need CMake 3.16+ and a C++20 compiler; coverage also needs Clang and matching LLVM tools. Test dependencies are separate from the standalone C utility.
-
-See [Contributing](CONTRIBUTING.md) for focused test runs, the test layout, coverage reports, and style checks.
-
 ## License
 
-[MIT](LICENSE) · Vladislav Punko
+[MIT](https://choosealicense.com/licenses/mit)
