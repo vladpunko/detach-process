@@ -24,13 +24,28 @@ namespace {
 
 constexpr std::size_t kReadBufferSize = 4096;
 
-// Retries reads interrupted by signals without losing progress.
-ssize_t ReadChunk(int fd, std::array<char, kReadBufferSize>& buffer) {
+// Collects bytes and returns zero on `EOF` or a saved `errno` on error.
+int ReadContents(int fd, std::string& contents) {
+    std::array<char, kReadBufferSize> buffer;
+
     while (true) {
         const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
-        if (bytes_read >= 0 || errno != EINTR) {
-            return bytes_read;
+        if (bytes_read > 0) {
+            contents.append(buffer.data(),
+                            static_cast<std::size_t>(bytes_read));
+            continue;
         }
+
+        if (bytes_read == 0) {
+            return 0;
+        }
+
+        const int error = errno;
+        if (error == EINTR) {
+            continue;
+        }
+
+        return error;
     }
 }
 
@@ -38,17 +53,17 @@ ssize_t ReadChunk(int fd, std::array<char, kReadBufferSize>& buffer) {
 
 // Descriptor ownership.
 
-Descriptor::Descriptor(int fd) : fd_(fd) {}
+FileDescriptor::FileDescriptor(int fd) : fd_(fd) {}
 
-Descriptor::~Descriptor() {
+FileDescriptor::~FileDescriptor() {
     Reset();
 }
 
-int Descriptor::get() const {
+int FileDescriptor::get() const {
     return fd_;
 }
 
-void Descriptor::Reset(int new_fd) {
+void FileDescriptor::Reset(int new_fd) {
     if (fd_ == new_fd) {
         return;
     }
@@ -59,7 +74,7 @@ void Descriptor::Reset(int new_fd) {
     }
 
     const int saved_errno = errno;
-    // Do not retry close: the descriptor may already be released.
+    // Retrying `close` could close a descriptor reused by another thread.
     const int status = close(prev_fd);
     EXPECT_TRUE(CheckSysCall(status, "close descriptor"));
     errno = saved_errno;
@@ -79,7 +94,7 @@ testing::AssertionResult CheckSysCall(int status, const char* operation) {
 // Reading and writing.
 
 std::string Read(const std::string& path) {
-    Descriptor input(open(path.c_str(), O_RDONLY));
+    FileDescriptor input(open(path.c_str(), O_RDONLY));
     if (input.get() < 0) {
         const int error = errno;
         ADD_FAILURE() << "It is not possible to open "
@@ -89,28 +104,16 @@ std::string Read(const std::string& path) {
         return {};
     }
 
-    std::array<char, kReadBufferSize> buffer;
     std::string contents;
-
-    while (true) {
-        const ssize_t bytes_read = ReadChunk(input.get(), buffer);
-        if (bytes_read > 0) {
-            contents.append(buffer.data(),
-                            static_cast<std::size_t>(bytes_read));
-            continue;
-        }
-
-        if (bytes_read == 0) {
-            return contents;
-        }
-
-        const int read_error = errno;
+    const int read_error = ReadContents(input.get(), contents);
+    if (read_error != 0) {
         ADD_FAILURE() << "It is not possible to read "
                       << path
                       << ": "
                       << std::strerror(read_error);
-        return contents;
     }
+
+    return contents;
 }
 
 void Write(const std::string& path, const std::string& contents) {
@@ -120,35 +123,21 @@ void Write(const std::string& path, const std::string& contents) {
     const auto bytes_to_write = static_cast<std::streamsize>(contents.size());
     output.write(contents.data(), bytes_to_write);
 
-    // Check after close so buffered write errors are included.
+    // Check after `close` so buffered write errors are included.
     output.close();
     ASSERT_TRUE(output) << "Cannot write " << path;
 }
 
 std::string ReadPipeOutput(int fd) {
-    std::array<char, kReadBufferSize> buffer;
     std::string contents;
-
-    while (true) {
-        const ssize_t bytes_read = ReadChunk(fd, buffer);
-        if (bytes_read > 0) {
-            contents.append(buffer.data(),
-                            static_cast<std::size_t>(bytes_read));
-            continue;
-        }
-
-        if (bytes_read == 0) {
-            return contents;
-        }
-
-        const int read_error = errno;
-        if (read_error != EAGAIN && read_error != EWOULDBLOCK) {
-            ADD_FAILURE() << "Cannot read pipe output: "
-                          << std::strerror(read_error);
-        }
-
-        return contents;
+    const int read_error = ReadContents(fd, contents);
+    if (read_error != 0 && read_error != EAGAIN &&
+        read_error != EWOULDBLOCK) {
+        ADD_FAILURE() << "Cannot read pipe output: "
+                      << std::strerror(read_error);
     }
+
+    return contents;
 }
 
 bool Exists(const std::string& path) {

@@ -15,15 +15,15 @@
 namespace detach_test {
 
 // Keeps descriptor cleanup safe when an assertion stops a test.
-class Descriptor {
+class FileDescriptor {
 public:
-    explicit Descriptor(int fd = -1);
-    ~Descriptor();
+    explicit FileDescriptor(int fd = -1);
+    ~FileDescriptor();
 
-    Descriptor(const Descriptor&) = delete;
+    FileDescriptor(const FileDescriptor&) = delete;
 
     // Prevent two owners from closing the same descriptor.
-    Descriptor& operator=(const Descriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
 
     // Returns the descriptor without transferring ownership.
     [[nodiscard]] int get() const;
@@ -42,7 +42,7 @@ private:
 std::string Read(const std::string& path);
 void Write(const std::string& path, const std::string& contents);
 
-// Reads pipe output until EOF or until a nonblocking pipe has no data.
+// Reads pipe output until `EOF` or until a nonblocking pipe has no data.
 std::string ReadPipeOutput(int fd);
 
 bool Exists(const std::string& path);
