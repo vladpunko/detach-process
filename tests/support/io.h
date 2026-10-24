@@ -38,13 +38,22 @@ private:
 // Checks a system call result so test assertions show the operation and error.
 [[nodiscard]] testing::AssertionResult CheckSysCall(int status, const char* operation);
 
+// Builds a `/dev/fd` path for tests that pass inherited descriptors to `detach`.
+std::string DescriptorPath(int fd);
+
+// Reads complete file contents for byte comparisons.
 std::string Read(const std::string& path);
+
+// Replaces file contents and checks buffered errors after closing.
 void Write(const std::string& path, const std::string& contents);
 
 // Reads pipe output until `EOF` or until a nonblocking pipe has no data.
 std::string ReadPipeOutput(int fd);
 
+// Checks path existence so tests can verify file creation and cleanup.
 bool Exists(const std::string& path);
+
+// Returns permission bits so tests can verify file modes.
 mode_t GetPermission(const std::string& path);
 
 }  // namespace detach_test

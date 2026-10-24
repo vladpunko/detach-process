@@ -102,6 +102,11 @@ testing::AssertionResult CheckSysCall(int status, const char* operation) {
         << std::strerror(error);
 }
 
+// Builds a `/dev/fd` path for inherited descriptor checks.
+std::string DescriptorPath(int fd) {
+    return "/dev/fd/" + std::to_string(fd);
+}
+
 // Reading and writing.
 
 // Reads file contents and preserves any bytes received before a read error.
