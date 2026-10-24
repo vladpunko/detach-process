@@ -17,11 +17,11 @@ namespace detach_test {
 
 // Configures the child process without changing the state of the test runner.
 struct LaunchOptions {
-    std::string executable_path;
-    std::map<std::string, std::string> environment;
+    std::string executable_path = {};
+    std::map<std::string, std::string> environment = {};
 
     // Path to the pseudoterminal used as the controlling terminal of the child.
-    std::string terminal_path;
+    std::string terminal_path = {};
 
     // Soft descriptor limit. Zero preserves the inherited value.
     rlim_t descriptor_limit = 0;
@@ -37,10 +37,10 @@ struct LaunchOptions {
     int file_creation_mask = -1;
 
     // Pipes without readers provoke `EPIPE` and `SIGPIPE`.
-    std::vector<int> broken_pipe_descriptors;
+    std::vector<int> broken_pipe_descriptors = {};
 
-    std::vector<int> ignored_signals;
-    std::vector<int> blocked_signals;
+    std::vector<int> ignored_signals = {};
+    std::vector<int> blocked_signals = {};
 };
 
 // Keeps the launcher status separate from the report of the detached command.
@@ -52,10 +52,11 @@ struct RunReport {
     int exit_code = -1;
     bool is_timed_out = false;
 
-    // Captured launcher output contains reports and startup diagnostics.
+    // Reports and startup diagnostics retain their original printed form.
     std::string output;
     std::string error;
 
+    // Decoded paths retain their original relative or absolute form.
     std::string stdout_path;
     std::string stderr_path;
 };

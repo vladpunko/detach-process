@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <csignal>
 #include <string>
 #include <vector>
 
@@ -19,22 +20,28 @@ namespace detach_test {
 namespace {
 
 // Uses the probe PID to check the exact public report layout.
-std::string ExpectedStartupReport(const RunReport& report, const ProbeState& state) {
+std::string ExpectedStartupReport(const ProbeState& state,
+                                  const std::string& stdout_path,
+                                  const std::string& stderr_path) {
     std::string expected = "PID: " + std::to_string(state.pid) + "\n";
-    expected += "stdout: " + report.stdout_path + "\n";
-    expected += "stderr: " + report.stderr_path + "\n";
+    expected += "stdout: " + stdout_path + "\n";
+    expected += "stderr: " + stderr_path + "\n";
     return expected;
 }
 
 class OutputTest : public DetachTest {
 protected:
     // Checks report order and PID file contents against the running probe.
-    void ExpectStartupReport(const RunReport& report) {
+    void ExpectStartupReport(const RunReport& report,
+                             const std::string& stdout_text,
+                             const std::string& stderr_text) {
         ASSERT_EQ(report.exit_code, 0)
             << report.error;
         const auto state = ReadProbe();
 
-        EXPECT_EQ(report.output, ExpectedStartupReport(report, state));
+        const auto expected = ExpectedStartupReport(state, stdout_text, stderr_text);
+
+        EXPECT_EQ(report.output, expected);
         EXPECT_TRUE(report.error.empty())
             << report.error;
         EXPECT_EQ(report.command_pid, state.pid);
@@ -53,7 +60,7 @@ TEST_F(OutputTest, HelpSucceedsWithoutStartingACommand) {
 
     EXPECT_EQ(report.exit_code, 0)
         << report.error;
-    EXPECT_EQ(report.output.find("Usage: detach"), 0u);
+    EXPECT_TRUE(report.output.starts_with("Usage: detach"));
     EXPECT_TRUE(report.error.empty());
     EXPECT_EQ(report.command_pid, -1);
 
@@ -67,7 +74,7 @@ TEST_F(OutputTest, HelpSucceedsWithoutStartingACommand) {
 TEST_F(OutputTest, PrintsCommandPidAndGeneratedLogPathsInOrder) {
     const auto report = RunProbeMode("streams", {"--pid", "job.pid"});
 
-    ExpectStartupReport(report);
+    ExpectStartupReport(report, report.stdout_path, report.stderr_path);
 }
 
 struct LaunchReportCase {
@@ -83,22 +90,35 @@ class LaunchReportTest : public OutputTest,
 TEST_P(LaunchReportTest, PrintsCommandPidAndLogPathsInOrder) {
     const auto& test_case = GetParam();
     const std::vector<std::string> options = {
-        "--pid",    "job.pid",
+        "--pid", "job.pid",
         "--stdout", test_case.stdout_path,
         "--stderr", test_case.stderr_path,
     };
 
     const auto report = RunProbeMode("streams", options);
 
-    ASSERT_NO_FATAL_FAILURE(ExpectStartupReport(report));
+    ASSERT_NO_FATAL_FAILURE(
+        ExpectStartupReport(report, test_case.stdout_path, test_case.stderr_path));
     EXPECT_EQ(report.stdout_path, test_case.stdout_path);
     EXPECT_EQ(report.stderr_path, test_case.stderr_path);
 }
 
 const LaunchReportCase kLaunchReports[] = {
-    {"SelectedFiles", "job.out", "job.err"},
-    {"SharedFile", "job.log", "job.log"},
-    {"PathsWithSpaces", "job output", "job errors"},
+    {
+        .name = "SelectedFiles",
+        .stdout_path = "job.out",
+        .stderr_path = "job.err",
+    },
+    {
+        .name = "SharedFile",
+        .stdout_path = "job.log",
+        .stderr_path = "job.log",
+    },
+    {
+        .name = "PathsWithSpaces",
+        .stdout_path = "job output",
+        .stderr_path = "job errors",
+    },
 };
 
 // Names report cases so failures identify the selected paths.
@@ -127,31 +147,71 @@ TEST_P(EscapedPathTest, KeepsPathsOnSeparateReportLines) {
     const auto& test_case = GetParam();
     const std::string stdout_path = std::string("output-") + test_case.path;
     const std::string stderr_path = std::string("errors-") + test_case.path;
+    const std::string printed_stdout = std::string("output-") + test_case.reported_path;
+    const std::string printed_stderr = std::string("errors-") + test_case.reported_path;
     const std::vector<std::string> options = {
-        "--pid", "job.pid", "--stdout", stdout_path, "--stderr", stderr_path,
+        "--pid", "job.pid",
+        "--stdout", stdout_path,
+        "--stderr", stderr_path,
     };
 
     const auto report = RunProbeMode("streams", options);
 
-    ASSERT_NO_FATAL_FAILURE(ExpectStartupReport(report));
-    EXPECT_EQ(report.stdout_path, std::string("output-") + test_case.reported_path);
-    EXPECT_EQ(report.stderr_path, std::string("errors-") + test_case.reported_path);
+    ASSERT_NO_FATAL_FAILURE(
+        ExpectStartupReport(report, printed_stdout, printed_stderr));
+    ASSERT_EQ(report.stdout_path, stdout_path);
+    ASSERT_EQ(report.stderr_path, stderr_path);
 
-    // Open the original paths independently of their escaped report values.
-    EXPECT_EQ(Read(Path(stdout_path)), "stdout one\nstdout two\n");
-    EXPECT_EQ(Read(Path(stderr_path)), "stderr one\nstderr two\n");
+    EXPECT_EQ(Read(Path(report.stdout_path)), "stdout one\nstdout two\n");
+    EXPECT_EQ(Read(Path(report.stderr_path)), "stderr one\nstderr two\n");
 }
 
 const EscapedPathCase kEscapedPaths[] = {
-    {"Backslash", "part\\end", "part\\\\end"},
-    {"LiteralEscape", "part\\x0aend", "part\\\\x0aend"},
-    {"Newline", "part\nend", "part\\x0aend"},
-    {"CarriageReturn", "part\rend", "part\\x0dend"},
-    {"Tab", "part\tend", "part\\x09end"},
-    {"Escape", "part\x1b-end", "part\\x1b-end"},
-    {"LastControlByte", "part\x1f-end", "part\\x1f-end"},
-    {"Delete", "part\x7f-end", "part\\x7f-end"},
-    {"Utf8", "роза", "роза"},
+    {
+        .name = "Backslash",
+        .path = "part\\end",
+        .reported_path = "part\\\\end",
+    },
+    {
+        .name = "LiteralEscape",
+        .path = "part\\x0aend",
+        .reported_path = "part\\\\x0aend",
+    },
+    {
+        .name = "Newline",
+        .path = "part\nend",
+        .reported_path = "part\\x0aend",
+    },
+    {
+        .name = "CarriageReturn",
+        .path = "part\rend",
+        .reported_path = "part\\x0dend",
+    },
+    {
+        .name = "Tab",
+        .path = "part\tend",
+        .reported_path = "part\\x09end",
+    },
+    {
+        .name = "Escape",
+        .path = "part\x1b-end",
+        .reported_path = "part\\x1b-end",
+    },
+    {
+        .name = "LastControlByte",
+        .path = "part\x1f-end",
+        .reported_path = "part\\x1f-end",
+    },
+    {
+        .name = "Delete",
+        .path = "part\x7f-end",
+        .reported_path = "part\\x7f-end",
+    },
+    {
+        .name = "Utf8",
+        .path = "роза",
+        .reported_path = "роза",
+    },
 };
 
 // Names path cases after the byte whose printed form is checked.
@@ -196,15 +256,15 @@ TEST_F(OutputTest, ReportsStartupSuccessEvenWhenTheCommandKillsItself) {
 // Broken output pipes.
 
 TEST_F(OutputTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
-    LaunchOptions options;
-    options.broken_pipe_descriptors = {STDOUT_FILENO};
+    const LaunchOptions options{.broken_pipe_descriptors = {STDOUT_FILENO}};
 
     const auto report = RunProbeMode("streams", {}, {}, options);
 
     ASSERT_EQ(report.exit_code, 1);
     const auto state = ReadProbe();
-    const std::string expected_report =
-        "The command may already be running.\n" + ExpectedStartupReport(report, state);
+    std::string expected_report = "The command may already be running.\n";
+    expected_report +=
+        ExpectedStartupReport(state, report.stdout_path, report.stderr_path);
 
     EXPECT_TRUE(report.output.empty());
     ASSERT_FALSE(report.stdout_path.empty());
@@ -219,8 +279,7 @@ TEST_F(OutputTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
 }
 
 TEST_F(OutputTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
-    LaunchOptions options;
-    options.broken_pipe_descriptors = {STDERR_FILENO};
+    const LaunchOptions options{.broken_pipe_descriptors = {STDERR_FILENO}};
 
     const auto report = Run({"--", Path("missing-command")}, options);
 
@@ -229,13 +288,18 @@ TEST_F(OutputTest, BrokenDiagnosticPipeDoesNotInterruptExecFailureHandling) {
 }
 
 TEST_F(OutputTest, HelpReportsFailureWhenItsOutputCannotBeWritten) {
-    LaunchOptions options;
-    options.broken_pipe_descriptors = {STDOUT_FILENO};
+    const LaunchOptions options{.broken_pipe_descriptors = {STDOUT_FILENO}};
 
     const auto report = Run({"--help"}, options);
 
-    EXPECT_FALSE(report.is_timed_out);
-    EXPECT_NE(report.exit_code, 0);
+    ASSERT_FALSE(report.is_timed_out);
+
+    if (WIFSIGNALED(report.status)) {
+        EXPECT_EQ(WTERMSIG(report.status), SIGPIPE);
+    } else {
+        ASSERT_TRUE(WIFEXITED(report.status));
+        EXPECT_NE(report.exit_code, 0);
+    }
 }
 
 }  // namespace

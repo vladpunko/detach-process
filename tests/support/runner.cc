@@ -17,11 +17,16 @@
 
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <istream>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -234,27 +239,129 @@ testing::AssertionResult WaitForLauncher(RunReport& report) {
         << "detach did not return before the deadline";
 }
 
-// Extracts the PID and output paths from the public startup report of `detach`.
+// Startup report parsing.
+
+constexpr unsigned char kFirstPrintableAscii = ' ';
+constexpr unsigned char kAsciiDelete = 0x7f;
+constexpr int kHexDigitsPerByte = 2;
+constexpr int kHexBase = 16;
+constexpr std::string_view kReportSeparator = ": ";
+
+// Identifies raw control bytes that require escaping in reported paths.
+bool IsControlByte(char byte) {
+    const auto value = static_cast<unsigned char>(byte);
+    return value < kFirstPrintableAscii || value == kAsciiDelete;
+}
+
+// Reads one escaped byte after the backslash in a reported path.
+bool ReadEscapedByte(std::istream& input, char& byte) {
+    if (!input.get(byte)) {
+        return false;
+    }
+    if (byte == '\\') {
+        return true;
+    }
+    if (byte != 'x') {
+        return false;
+    }
+
+    std::array<char, kHexDigitsPerByte> digits = {};
+    if (!input.read(digits.data(), kHexDigitsPerByte)) {
+        return false;
+    }
+
+    unsigned char value = '\0';
+    const char* end = digits.data() + digits.size();
+    const auto parsed = std::from_chars(digits.data(), end, value, kHexBase);
+    if (parsed.ec != std::errc() || parsed.ptr != end || value == '\0') {
+        return false;
+    }
+
+    // Preserve byte values above ASCII in the decoded file name.
+    byte = static_cast<char>(value);
+    return true;
+}
+
+// Restores real file names from the path escapes printed by `detach`.
+bool DecodeReportedPath(const std::string& text, std::string& path) {
+    std::istringstream input(text);
+    std::string decoded;
+    char byte = '\0';
+
+    while (input.get(byte)) {
+        if (byte == '\\') {
+            if (!ReadEscapedByte(input, byte)) {
+                return false;
+            }
+        } else if (IsControlByte(byte)) {
+            return false;
+        }
+        decoded += byte;
+    }
+
+    if (!input.eof() || decoded.empty()) {
+        return false;
+    }
+
+    path = std::move(decoded);
+    return true;
+}
+
+// Accepts a complete positive PID and keeps paths tied to that process.
+bool AcceptReportedPid(const std::string& value, RunReport& report) {
+    pid_t pid = 0;
+    const char* end = value.data() + value.size();
+    const auto parsed = std::from_chars(value.data(), end, pid);
+    if (parsed.ec != std::errc() || parsed.ptr != end || pid <= 0) {
+        return false;
+    }
+
+    if (pid != report.command_pid) {
+        report.stdout_path.clear();
+        report.stderr_path.clear();
+    }
+    report.command_pid = pid;
+    return true;
+}
+
+// Extracts paths only after a valid PID starts a report in this captured stream.
 void ParseReport(const std::string& text, RunReport& report) {
     std::istringstream report_lines(text);
     std::string line;
+    bool report_started = false;
 
     while (std::getline(report_lines, line)) {
-        const auto separator = line.find(": ");
+        const auto separator = line.find(kReportSeparator);
         if (separator == std::string::npos) {
             continue;
         }
 
         // Report lines use `name: value`. Keep spaces inside the value.
         const std::string name = line.substr(0, separator);
-        const std::string value = line.substr(separator + 2);
+        const std::string value = line.substr(separator + kReportSeparator.size());
 
         if (name == "PID") {
-            std::istringstream(value) >> report.command_pid;
-        } else if (name == "stdout") {
-            report.stdout_path = value;
-        } else if (name == "stderr") {
-            report.stderr_path = value;
+            report_started = AcceptReportedPid(value, report);
+            continue;
+        }
+
+        if (!report_started) {
+            continue;
+        }
+
+        if (name != "stdout" && name != "stderr") {
+            continue;
+        }
+
+        std::string path;
+        if (!DecodeReportedPath(value, path)) {
+            continue;
+        }
+
+        if (name == "stdout") {
+            report.stdout_path = std::move(path);
+        } else {
+            report.stderr_path = std::move(path);
         }
     }
 }
@@ -294,9 +401,9 @@ RunReport RunDetach(std::vector<std::string> arguments,
     }
 
     // Keep the strings alive until `execv` reads the argument pointers.
-    std::vector<char*> argv = {&executable_path[0]};
+    std::vector<char*> argv = {executable_path.data()};
     for (std::string& argument : arguments) {
-        argv.push_back(&argument[0]);
+        argv.push_back(argument.data());
     }
     argv.push_back(nullptr);
 
