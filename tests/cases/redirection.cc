@@ -479,7 +479,7 @@ TEST_F(RedirectionTest, ExecFailureKeepsUserSelectedLogsAndReportsTheirLocation)
     EXPECT_EQ(report.exit_code, 1);
     EXPECT_TRUE(Read(Path("output")).empty());
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "exec:", Read(Path("errors")));
-    EXPECT_PRED_FORMAT2(testing::IsSubstring, "Check stderr: " + Path("errors"),
+    EXPECT_PRED_FORMAT2(testing::IsSubstring, "check stderr: " + Path("errors"),
                         report.error);
 }
 
@@ -487,7 +487,7 @@ TEST_F(RedirectionTest, ExecFailureCopiesTemporaryDiagnosticsToTheCaller) {
     const auto report = Run({"--", Path("missing-command")});
 
     EXPECT_EQ(report.exit_code, 1);
-    EXPECT_PRED_FORMAT2(testing::IsSubstring, "Failed to start the command",
+    EXPECT_PRED_FORMAT2(testing::IsSubstring, "failed to start the command",
                         report.error);
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "exec:", report.error);
 }
@@ -497,7 +497,7 @@ TEST_F(RedirectionTest, ExecFailureReportsAnExplicitStderrWithTemporaryStdout) {
         Run({"--stderr", Path("errors"), "--", Path("missing-command")});
 
     EXPECT_EQ(report.exit_code, 1);
-    EXPECT_PRED_FORMAT2(testing::IsSubstring, "Check stderr: " + Path("errors"),
+    EXPECT_PRED_FORMAT2(testing::IsSubstring, "check stderr: " + Path("errors"),
                         report.error);
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "exec:", Read(Path("errors")));
 }

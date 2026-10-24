@@ -105,7 +105,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EIO,
         },
-        .expected_diagnostic = "SIGPIPE:",
+        .expected_diagnostic = "sigpipe:",
     },
     {
         .name = "SignalDisposition",
@@ -115,7 +115,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EIO,
         },
-        .expected_diagnostic = "SIGPIPE:",
+        .expected_diagnostic = "sigpipe:",
     },
 
     // Standard descriptors and temporary logs.
@@ -313,7 +313,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EPERM,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "SecondFork",
@@ -323,7 +323,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EAGAIN,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "WaitIntermediate",
@@ -355,7 +355,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = FAULT_EOF,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "SendPermission",
@@ -375,7 +375,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EIO,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "SendPidZero",
@@ -385,7 +385,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = FAULT_EOF,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "ReceivePermission",
@@ -479,7 +479,7 @@ const ErrorCase kStartupFailures[] = {
             .call_number = 1,
             .result = EIO,
         },
-        .expected_diagnostic = "SIGPIPE:",
+        .expected_diagnostic = "sigpipe:",
     },
 };
 
@@ -696,7 +696,7 @@ const ErrorCase kDiagnosticFailures[] = {
             .call_number = 1,
             .result = EIO,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "RestoreIgnoredSigpipe",
@@ -706,7 +706,7 @@ const ErrorCase kDiagnosticFailures[] = {
             .call_number = 2,
             .result = EIO,
         },
-        .expected_diagnostic = "Failed to start the command",
+        .expected_diagnostic = "failed to start the command",
     },
     {
         .name = "InterruptedFailureReport",
@@ -798,7 +798,7 @@ TEST_P(ReportFailureTest, KeepsTheCommandAndItsLogsAvailable) {
 
     const auto report = RunProbeMode("streams", {}, {}, options);
 
-    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "The command may already be running"));
+    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "the command may already be running"));
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 
@@ -817,7 +817,7 @@ TEST_F(CommandErrorTest, StderrLabelFailurePreservesTheCommandAndItsLogs) {
 
     const auto report = RunProbeMode("streams", {}, {}, options);
 
-    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "The command may already be running"));
+    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "the command may already be running"));
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 
@@ -834,7 +834,7 @@ TEST_F(CommandErrorTest, StdoutNewlineFailurePreservesTheCommandAndItsLogs) {
 
     const auto report = RunProbeMode("streams", {"--stdout", output_path}, {}, options);
 
-    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "The command may already be running"));
+    ASSERT_NO_FATAL_FAILURE(ExpectError(report, "the command may already be running"));
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 

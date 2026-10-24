@@ -239,7 +239,7 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
 
     const auto report = RunProbe(options);
 
-    ExpectAliasError(report, "PID file must differ");
+    ExpectAliasError(report, "pid file must differ");
     ExpectFilesUnchanged();
 }
 
@@ -321,7 +321,7 @@ INSTANTIATE_TEST_SUITE_P(InputAliases,
 TEST_F(AliasesTest, PidCannotAliasTheDefaultDevNullInput) {
     const auto report = RunProbe({"--pid", "/dev/null"});
 
-    ExpectAliasError(report, "PID file must differ");
+    ExpectAliasError(report, "pid file must differ");
 }
 
 TEST_F(AliasesTest, InheritedSharedOutputsAreRewoundBeforeWriting) {

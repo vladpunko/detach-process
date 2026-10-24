@@ -226,7 +226,7 @@ INSTANTIATE_TEST_SUITE_P(PathEscaping,
 
 TEST_F(OutputTest, ExecFailureEscapesTheSelectedErrorPath) {
     const std::string error_path = "job\nerrors\\log";
-    const std::string expected_message = "Check stderr: job\\x0aerrors\\\\log\n";
+    const std::string expected_message = "check stderr: job\\x0aerrors\\\\log\n";
 
     const auto report = Run({"--stderr", error_path, "--", Path("missing-command")});
 
@@ -262,7 +262,7 @@ TEST_F(OutputTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
 
     ASSERT_EQ(report.exit_code, 1);
     const auto state = ReadProbe();
-    std::string expected_report = "The command may already be running.\n";
+    std::string expected_report = "the command may already be running\n";
     expected_report +=
         ExpectedStartupReport(state, report.stdout_path, report.stderr_path);
 
