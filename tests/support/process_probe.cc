@@ -30,6 +30,12 @@ namespace {
 
 constexpr auto kTimeout = std::chrono::seconds(5);
 
+// Keeps control sockets out of other programs started by the test.
+testing::AssertionResult SetCloseOnExec(int fd) {
+    const int status = fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return CheckSysCall(status, "set probe close-on-exec");
+}
+
 // Waits for data or `EOF` without extending the deadline after a signal.
 testing::AssertionResult WaitReadable(int fd,
                                       std::chrono::steady_clock::time_point deadline) {
@@ -50,7 +56,8 @@ testing::AssertionResult WaitReadable(int fd,
         }
 
         if (event.revents & POLLNVAL) {
-            return testing::AssertionFailure() << "invalid probe descriptor";
+            return testing::AssertionFailure()
+                << "invalid probe descriptor";
         }
 
         // Let the caller read buffered data or observe `EOF` after a hangup.
@@ -58,11 +65,13 @@ testing::AssertionResult WaitReadable(int fd,
             return testing::AssertionSuccess();
         }
         if (event.revents & POLLERR) {
-            return testing::AssertionFailure() << "cannot communicate with the probe";
+            return testing::AssertionFailure()
+                << "cannot communicate with the probe";
         }
     }
 
-    return testing::AssertionFailure() << "timed out waiting for the probe";
+    return testing::AssertionFailure()
+        << "timed out waiting for the probe";
 }
 
 // Reads one complete record using a single deadline across partial transfers.
@@ -91,7 +100,7 @@ testing::AssertionResult ReadExactly(int fd,
         }
         if (bytes_read == 0) {
             return testing::AssertionFailure()
-                   << "probe connection closed before the full record was received";
+                << "probe connection closed before the full record was received";
         }
 
         // Continue after the received bytes because socket reads can be partial.
@@ -110,8 +119,7 @@ void ProcessProbe::Listen(const std::string& path) {
     ASSERT_TRUE(CheckSysCall(listener_.get(), "create probe socket"));
 
     // Keep the listener out of `detach` and the tested command.
-    const int flags_status = fcntl(listener_.get(), F_SETFD, FD_CLOEXEC);
-    ASSERT_TRUE(CheckSysCall(flags_status, "set probe close-on-exec"));
+    ASSERT_TRUE(SetCloseOnExec(listener_.get()));
 
     // Leave space for the terminating zero in `sun_path`.
     struct sockaddr_un address = {};
@@ -156,6 +164,11 @@ testing::AssertionResult ProcessProbe::ReceiveState(ProbeState& state) {
         break;
     }
 
+    const auto flags_status = SetCloseOnExec(peer_.get());
+    if (!flags_status) {
+        return flags_status;
+    }
+
     // The complete record confirms that probe output is ready for assertions.
     const auto read_status = ReadExactly(peer_.get(), state, deadline);
     if (read_status) {
@@ -177,10 +190,13 @@ void ProcessProbe::Ping() {
 
     while (true) {
         const ssize_t bytes_sent = send(peer_.get(), &ping, 1, MSG_NOSIGNAL);
-        if (bytes_sent < 0 && errno == EINTR) {
+        const int error = errno;
+        if (bytes_sent < 0 && error == EINTR) {
             continue;
         }
-        ASSERT_EQ(bytes_sent, 1) << "cannot send probe ping: " << std::strerror(errno);
+        ASSERT_EQ(bytes_sent, 1)
+            << "cannot send probe ping: "
+            << std::strerror(error);
         break;
     }
 
