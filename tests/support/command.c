@@ -219,6 +219,63 @@ static int require_mode_argument(int argc, const char* mode) {
     return 0;
 }
 
+// Prints each argument with its length to preserve empty values and newlines.
+static int print_arguments(int argc, char* argv[]) {
+    for (int index = 3; index < argc; index += 1) {
+        if (printf("%zu:", strlen(argv[index])) < 0 ||
+            fputs(argv[index], stdout) == EOF || putchar('\n') == EOF) {
+            return report_system_error("cannot write command arguments");
+        }
+    }
+
+    return 1;
+}
+
+// Prints one inherited environment value so tests can check it unchanged.
+static int print_environment(const char* name) {
+    const char* value = getenv(name);
+    if (value == NULL) {
+        fprintf(stderr, "environment variable is not set: %s\n", name);
+        return 0;
+    }
+
+    if (fputs(value, stdout) == EOF) {
+        return report_system_error("cannot write environment value");
+    }
+
+    return 1;
+}
+
+// Prints the current directory so tests can compare it with the caller directory.
+static int print_working_directory(void) {
+    char* directory = getcwd(NULL, 0);
+    if (directory == NULL) {
+        return report_system_error("cannot read working directory");
+    }
+
+    const int status = fputs(directory, stdout);
+    if (status == EOF) {
+        report_system_error("cannot write working directory");
+    }
+
+    free(directory);
+    return status >= 0;
+}
+
+// Opens a terminal so state capture can detect accidental terminal ownership.
+static int check_terminal(const char* path) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) {
+        return report_system_error("cannot open command terminal");
+    }
+
+    if (close(fd) < 0) {
+        return report_system_error("cannot close command terminal");
+    }
+
+    return 1;
+}
+
 // Finishes the requested reads and writes before tests receive the process state.
 static int run_mode(int argc, char* argv[], ProbeState* state) {
     const char* mode = argv[1];
@@ -234,14 +291,7 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
     }
 
     if (strcmp(mode, "arguments") == 0) {
-        for (int index = 3; index < argc; index += 1) {
-            // Length prefixes preserve empty arguments and embedded newlines.
-            if (printf("%zu:", strlen(argv[index])) < 0 ||
-                fputs(argv[index], stdout) == EOF || putchar('\n') == EOF) {
-                return report_system_error("cannot write command arguments");
-            }
-        }
-        return 1;
+        return print_arguments(argc, argv);
     }
 
     if (strcmp(mode, "environment") == 0) {
@@ -249,32 +299,11 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
             return 0;
         }
 
-        const char* value = getenv(argv[3]);
-        if (value == NULL) {
-            fprintf(stderr, "environment variable is not set: %s\n", argv[3]);
-            return 0;
-        }
-
-        if (fputs(value, stdout) == EOF) {
-            return report_system_error("cannot write environment value");
-        }
-
-        return 1;
+        return print_environment(argv[3]);
     }
 
     if (strcmp(mode, "cwd") == 0) {
-        char* directory = getcwd(NULL, 0);
-        if (directory == NULL) {
-            return report_system_error("cannot read working directory");
-        }
-
-        int written = fputs(directory, stdout);
-        if (written == EOF) {
-            report_system_error("cannot write working directory");
-        }
-
-        free(directory);
-        return written >= 0;
+        return print_working_directory();
     }
 
     if (strcmp(mode, "terminal") == 0) {
@@ -282,17 +311,7 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
             return 0;
         }
 
-        // A second fork prevents an ordinary open from acquiring this terminal.
-        int fd = open(argv[3], O_RDWR);
-        if (fd < 0) {
-            return report_system_error("cannot open command terminal");
-        }
-
-        if (close(fd) < 0) {
-            return report_system_error("cannot close command terminal");
-        }
-
-        return 1;
+        return check_terminal(argv[3]);
     }
 
     if (strcmp(mode, "descriptor") == 0) {
@@ -329,12 +348,14 @@ static int connect_to_test(const char* path) {
 
     struct sockaddr_un address = {0};
     address.sun_family = AF_UNIX;
-    if (strlen(path) >= sizeof(address.sun_path)) {
+    const size_t path_length = strlen(path);
+    if (path_length >= sizeof(address.sun_path)) {
         close(channel);
         errno = ENAMETOOLONG;
         return -1;
     }
-    memcpy(address.sun_path, path, strlen(path) + 1);
+
+    memcpy(address.sun_path, path, path_length + 1);
     if (connect(channel, (struct sockaddr*)&address, sizeof(address)) < 0) {
         const int error = errno;
         close(channel);
