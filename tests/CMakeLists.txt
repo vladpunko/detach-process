@@ -70,22 +70,14 @@ endif()
 option(ENABLE_COVERAGE "Enable test coverage reporting" OFF)
 if(ENABLE_COVERAGE)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/coverage.cmake")
-    set(test_executable "$<TARGET_FILE:detach_faults>")
+    set(detach_executable "$<TARGET_FILE:detach_faults>")
 else()
-    set(test_executable "$<TARGET_FILE:detach>")
+    set(detach_executable "$<TARGET_FILE:detach>")
 endif()
-
-# Runtime paths keep the helpers independent of generated preprocessor macros.
-set(test_environment
-    "DETACH_TEST_EXECUTABLE=${test_executable}"
-    "DETACH_TEST_PROBE_EXECUTABLE=$<TARGET_FILE:detach_probe>"
-    "DETACH_TEST_FAULT_EXECUTABLE=$<TARGET_FILE:detach_faults>"
-)
 
 include(GoogleTest)
 gtest_discover_tests(detach_tests
     NO_PRETTY_VALUES
-    PROPERTIES
-        TIMEOUT 20
-        ENVIRONMENT "${test_environment}"
+    PROPERTIES TIMEOUT 20
 )
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/test_environment.cmake")

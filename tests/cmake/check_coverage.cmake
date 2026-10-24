@@ -14,7 +14,6 @@ if(NOT EXISTS "${SOURCE_FILE}" OR IS_DIRECTORY "${SOURCE_FILE}")
     message(FATAL_ERROR "coverage source is not a file: ${SOURCE_FILE}")
 endif()
 
-get_filename_component(expected_source "${SOURCE_FILE}" REALPATH)
 file(READ "${REPORT}" report_text)
 file(READ "${REPORT}" report_hex HEX)
 string(REGEX MATCHALL ".." report_bytes "${report_hex}")
@@ -24,74 +23,77 @@ endif()
 
 # Preserve complete lines so malformed summaries cannot lose invalid bytes.
 string(REPLACE ";" "\\;" report_text "${report_text}")
-string(REPLACE "\n" ";" coverage_lines "${report_text}")
+string(REPLACE "\n" ";" report_lines "${report_text}")
 
 # A report for another file must never satisfy the coverage gate.
 set(source_count 0)
-foreach(record IN LISTS coverage_lines)
-    if(record MATCHES "^SF:")
+foreach(line IN LISTS report_lines)
+    if(line MATCHES "^SF:(.*)$")
         math(EXPR source_count "${source_count} + 1")
-        set(source_record "${record}")
+        set(reported_source "${CMAKE_MATCH_1}")
     endif()
 endforeach()
 if(NOT source_count EQUAL 1)
     message(FATAL_ERROR "expected one source file in coverage report: ${source_count}")
 endif()
 
-string(REGEX REPLACE "^SF:" "" reported_source "${source_record}")
 if(NOT EXISTS "${reported_source}" OR IS_DIRECTORY "${reported_source}")
     message(FATAL_ERROR "reported source is not a file: ${reported_source}")
 endif()
 
 # REALPATH resolves symlinks and normalizes relative paths from the working directory.
+get_filename_component(expected_source "${SOURCE_FILE}" REALPATH)
 get_filename_component(reported_source "${reported_source}" REALPATH)
 if(NOT "${reported_source}" STREQUAL "${expected_source}")
     message(FATAL_ERROR
         "coverage source does not match the requested file:\n"
         "  reported: ${reported_source}\n"
-        "  expected: ${expected_source}")
+        "  expected: ${expected_source}"
+    )
 endif()
 
-# Reject missing, repeated, or malformed summaries before comparing counts.
-function(read_metric key output)
-    set(records "${coverage_lines}")
-    list(FILTER records INCLUDE REGEX "^${key}:")
-    list(LENGTH records count)
-    if(NOT count EQUAL 1)
-        message(FATAL_ERROR "expected one ${key} count in coverage report: ${count}")
+# Reads one summary count and rejects missing, repeated or malformed fields.
+function(read_count lines field output_count)
+    list(FILTER lines INCLUDE REGEX "^${field}:")
+    list(LENGTH lines record_count)
+    if(NOT record_count EQUAL 1)
+        message(FATAL_ERROR
+            "expected one ${field} count in coverage report: ${record_count}"
+        )
     endif()
 
-    list(GET records 0 record)
-    if(NOT "${record}" MATCHES "^${key}:([0-9]+)$")
+    list(GET lines 0 record)
+    if(NOT "${record}" MATCHES "^${field}:([0-9]+)$")
         message(FATAL_ERROR
-            "expected a nonnegative ${key} count in coverage report: ${record}")
+            "expected a nonnegative ${field} count in coverage report: ${record}"
+        )
     endif()
 
     # Decimal strings keep comparisons exact even beyond CMake numeric precision.
-    string(REGEX REPLACE "^0+" "" value "${CMAKE_MATCH_1}")
-    if("${value}" STREQUAL "")
-        set(value "0")
+    string(REGEX REPLACE "^0+" "" count "${CMAKE_MATCH_1}")
+    if("${count}" STREQUAL "")
+        set(count "0")
     endif()
-    set(${output} "${value}" PARENT_SCOPE)
+    set(${output_count} "${count}" PARENT_SCOPE)
 endfunction()
 
-# Empty summaries must not disguise missing instrumentation as complete coverage.
-function(require_full_coverage label found_key hit_key)
-    read_metric("${found_key}" found)
-    read_metric("${hit_key}" hits)
+# Rejects empty or partial coverage so missing instrumentation cannot pass.
+function(require_full_coverage lines label total_field covered_field)
+    read_count("${lines}" "${total_field}" total)
+    read_count("${lines}" "${covered_field}" covered)
 
-    if("${found}" STREQUAL "0")
+    if("${total}" STREQUAL "0")
         message(FATAL_ERROR "no ${label} entries in coverage report")
     endif()
-    if(NOT "${hits}" STREQUAL "${found}")
-        message(FATAL_ERROR "incomplete ${label} coverage: ${hits}/${found}")
+    if(NOT "${covered}" STREQUAL "${total}")
+        message(FATAL_ERROR "incomplete ${label} coverage: ${covered}/${total}")
     endif()
-    message(STATUS "${label} coverage: ${hits}/${found}")
+    message(STATUS "${label} coverage: ${covered}/${total}")
 endfunction()
 
 # `LF` and `LH` count lines, `FNF` and `FNH` functions, `BRF` and `BRH` branches.
 # Each pair records found items followed by hit items.
-require_full_coverage("line" "LF" "LH")
-require_full_coverage("function" "FNF" "FNH")
-require_full_coverage("branch" "BRF" "BRH")
+require_full_coverage("${report_lines}" "line" "LF" "LH")
+require_full_coverage("${report_lines}" "function" "FNF" "FNH")
+require_full_coverage("${report_lines}" "branch" "BRF" "BRH")
 message(STATUS "full coverage verified: ${expected_source}")

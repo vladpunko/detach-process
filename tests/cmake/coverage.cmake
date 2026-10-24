@@ -60,7 +60,6 @@ add_custom_target(coverage
     COMMAND "${CMAKE_COMMAND}"
         "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
         "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/detach.c"
-        "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
         "-DCOVERAGE_EXECUTABLE=$<TARGET_FILE:detach_faults>"
         "-DLLVM_PROFDATA=${LLVM_PROFDATA}"
         "-DLLVM_COV=${LLVM_COV}"

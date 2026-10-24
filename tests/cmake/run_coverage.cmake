@@ -3,8 +3,13 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Validate inputs before removing profiles from a previous run.
-foreach(required BUILD_DIR SOURCE_FILE CTEST_COMMAND COVERAGE_EXECUTABLE
-                 LLVM_PROFDATA LLVM_COV)
+foreach(required IN ITEMS
+    BUILD_DIR
+    SOURCE_FILE
+    COVERAGE_EXECUTABLE
+    LLVM_PROFDATA
+    LLVM_COV
+)
     if("${${required}}" STREQUAL "")
         message(FATAL_ERROR "missing coverage setting: ${required}")
     endif()
@@ -28,10 +33,10 @@ endfunction()
 
 # Fresh profiles prevent an earlier run from hiding a coverage gap.
 set(profile_directory "${BUILD_DIR}/profiles")
-set(profile_data "${BUILD_DIR}/coverage.profdata")
+set(merged_profile "${BUILD_DIR}/coverage.profdata")
 set(report "${BUILD_DIR}/coverage.lcov")
 file(REMOVE_RECURSE "${profile_directory}")
-file(REMOVE "${profile_data}" "${report}")
+file(REMOVE "${merged_profile}" "${report}")
 file(MAKE_DIRECTORY "${profile_directory}")
 
 set(ctest_arguments --output-on-failure --parallel 2)
@@ -40,7 +45,7 @@ if(NOT "${CONFIG}" STREQUAL "")
 endif()
 run_checked("${CMAKE_COMMAND}" -E env
     "LLVM_PROFILE_FILE=${profile_directory}/%m-%p.profraw"
-    "${CTEST_COMMAND}" ${ctest_arguments}
+    "${CMAKE_CTEST_COMMAND}" ${ctest_arguments}
 )
 
 file(GLOB profiles "${profile_directory}/*.profraw")
@@ -50,10 +55,11 @@ endif()
 
 # Umask tests can leave profiles unreadable. Preserve every profile for merging.
 run_checked(chmod u+rw ${profiles})
-run_checked("${LLVM_PROFDATA}" merge -sparse ${profiles} -o "${profile_data}")
+run_checked("${LLVM_PROFDATA}" merge -sparse ${profiles} -o "${merged_profile}")
+
 set(coverage_arguments
     "${COVERAGE_EXECUTABLE}"
-    "-instr-profile=${profile_data}"
+    "-instr-profile=${merged_profile}"
     "${SOURCE_FILE}"
 )
 run_checked("${LLVM_COV}" report ${coverage_arguments})
