@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 
-# Created by: Vladislav Punko <iam.vlad.punko@gmail.com>
-# Created date: 2026-10-21
-
 find_package(GTest CONFIG QUIET)
 if(NOT TARGET GTest::gtest_main)
     include(FetchContent)
@@ -20,66 +17,75 @@ if(NOT TARGET GTest::gtest_main)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-add_executable(detach_probe probe.c)
-target_include_directories(detach_probe PRIVATE "${PROJECT_SOURCE_DIR}")
-set_target_properties(detach_probe PROPERTIES
-    C_STANDARD 99
-    C_STANDARD_REQUIRED YES
-    C_EXTENSIONS NO
-)
+add_executable(detach_probe support/command.c)
 
 # Only this executable replaces system calls for deterministic failure tests.
-add_executable(detach_faults faults.c)
+add_executable(detach_faults support/syscall_overrides.c)
+
+target_include_directories(detach_probe PRIVATE "${PROJECT_SOURCE_DIR}")
 target_include_directories(detach_faults PRIVATE "${PROJECT_SOURCE_DIR}")
-set_target_properties(detach_faults PROPERTIES
+set_target_properties(detach_probe detach_faults PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED YES
     C_EXTENSIONS NO
 )
 
+set(test_warning_flags -Wall -Wextra -Werror -Wpedantic)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(detach_probe PRIVATE ${test_warning_flags})
+    target_compile_options(detach_faults PRIVATE ${test_warning_flags})
+endif()
+
 add_executable(detach_tests
-    arguments_test.cc
-    files_test.cc
-    file_aliases_test.cc
-    output_test.cc
-    process_test.cc
-    signals_test.cc
-    terminal_test.cc
-    failures_test.cc
-    fault_test.cc
-    probe_client.cc
-    test_files.cc
-    test_launcher.cc
-    test_support.cc
+    cases/arguments.cc
+    cases/output.cc
+    cases/redirection.cc
+    cases/aliases.cc
+    cases/process.cc
+    cases/signals.cc
+    cases/terminal.cc
+    cases/errors.cc
+    cases/reports.cc
+    support/io.cc
+    support/runner.cc
+    support/process_probe.cc
+    support/fixture.cc
+    support/error_fixture.cc
 )
 set_target_properties(detach_tests PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
-target_compile_definitions(detach_tests PRIVATE
-    DETACH_PATH="$<TARGET_FILE:detach>"
-    FAULT_PATH="$<TARGET_FILE:detach_faults>"
-    PROBE_PATH="$<TARGET_FILE:detach_probe>"
-)
 target_link_libraries(detach_tests PRIVATE GTest::gtest_main)
 target_include_directories(detach_tests PRIVATE "${PROJECT_SOURCE_DIR}")
 add_dependencies(detach_tests detach detach_probe detach_faults)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(detach_probe PRIVATE -Wall -Wextra -Werror -Wpedantic)
-    target_compile_options(detach_faults PRIVATE -Wall -Wextra -Werror -Wpedantic)
-endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(detach_tests PRIVATE
-        -Wall -Wextra -Werror -Wpedantic -fno-exceptions
+        ${test_warning_flags} -fno-exceptions
     )
 endif()
 
-include(GoogleTest)
-gtest_discover_tests(detach_tests NO_PRETTY_VALUES PROPERTIES TIMEOUT 20)
-
-option(ENABLE_COVERAGE "Instrument detach.c with Clang source coverage" OFF)
+option(ENABLE_COVERAGE "Enable test coverage reporting" OFF)
 if(ENABLE_COVERAGE)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/coverage.cmake")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/coverage.cmake")
+    set(test_executable "$<TARGET_FILE:detach_faults>")
+else()
+    set(test_executable "$<TARGET_FILE:detach>")
 endif()
+
+# Runtime paths keep the helpers independent of generated preprocessor macros.
+set(test_environment
+    "DETACH_TEST_EXECUTABLE=${test_executable}"
+    "DETACH_TEST_PROBE_EXECUTABLE=$<TARGET_FILE:detach_probe>"
+    "DETACH_TEST_FAULT_EXECUTABLE=$<TARGET_FILE:detach_faults>"
+)
+
+include(GoogleTest)
+gtest_discover_tests(detach_tests
+    NO_PRETTY_VALUES
+    PROPERTIES
+        TIMEOUT 20
+        ENVIRONMENT "${test_environment}"
+)
