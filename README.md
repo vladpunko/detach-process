@@ -12,7 +12,7 @@ Detaching a long-running command usually means juggling `nohup`, backgrounding, 
 
 ## Installation
 
-Requirements: Linux or macOS with [git](https://git-scm.com/downloads), a C99 compiler such as [gcc](https://gcc.gnu.org/install), and `install`. For the one-line installer you also need [curl](https://curl.se/download.html) and `sudo`.
+Requirements: Linux or macOS with [git](https://git-scm.com/downloads), a C99 compiler such as [gcc](https://gcc.gnu.org/install), and `install`. For the one-line installer you also need [curl](https://curl.se/download.html), `sudo`, [make](https://www.gnu.org/software/make/), [cmake](https://cmake.org/download/), and a [C++20 compiler](https://gcc.gnu.org/projects/cxx-status.html#cxx20).
 
 To install this package as a standalone application with the command-line interface you are to run the following command:
 
@@ -21,6 +21,8 @@ sudo sh -c "$(curl https://raw.githubusercontent.com/vladpunko/detach-process/ma
 ```
 
 The install script defaults to `/usr/local/bin` for the binary and `/usr/local/share/man/man1` for the man page.
+
+The installer builds a release binary and runs the tests before installing it. If the build or tests fail, the installed files remain unchanged.
 
 You can also install this system package on your working machine (works for unix-like operating systems) from source code to a system location:
 

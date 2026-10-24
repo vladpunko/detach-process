@@ -33,12 +33,12 @@ git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-proce
 }
 
 # Step -- 2.
-gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -o "${workdir}/detach"
+make -C "${workdir}" tests BUILD_TYPE=Release
 
 # Step -- 3.
 umask 022
 mkdir -p /usr/local/bin
-install -m 755 "${workdir}/detach" /usr/local/bin/detach
+install -m 755 "${workdir}/build/testing/detach" /usr/local/bin/detach
 
 # Step -- 4.
 mkdir -p /usr/local/share/man/man1
