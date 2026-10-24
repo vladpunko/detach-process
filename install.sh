@@ -37,12 +37,9 @@ gcc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter "${workdir}/detach.c" -
 
 # Step -- 3.
 umask 022
-install -d -m 755 /usr/local/bin
+mkdir -p /usr/local/bin
 install -m 755 "${workdir}/detach" /usr/local/bin/detach
 
 # Step -- 4.
-install -d -m 755 /usr/local/share/man/man1
-chmod 755 /usr/local/share \
-          /usr/local/share/man \
-          /usr/local/share/man/man1
+mkdir -p /usr/local/share/man/man1
 install -m 644 "${workdir}/detach.1" /usr/local/share/man/man1/detach.1
