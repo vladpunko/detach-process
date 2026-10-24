@@ -55,6 +55,11 @@ target_compile_options(detach_faults PRIVATE
 )
 target_link_options(detach_faults PRIVATE -fprofile-instr-generate)
 
+# A rebuilt executable must never reuse profiles from its previous version.
+add_custom_command(TARGET detach_faults PRE_LINK
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory "${CMAKE_BINARY_DIR}/profiles"
+)
+
 set(coverage_settings
     "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
     "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/detach.c"
