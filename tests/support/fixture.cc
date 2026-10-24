@@ -95,7 +95,7 @@ RunReport DetachTest::Run(const std::vector<std::string>& arguments,
     auto report = RunDetach(arguments, directory_, options);
 
     for (const auto& path : {report.stdout_path, report.stderr_path}) {
-        if (path.rfind("/tmp/stdout.", 0) == 0 || path.rfind("/tmp/stderr.", 0) == 0) {
+        if (path.starts_with("/tmp/stdout.") || path.starts_with("/tmp/stderr.")) {
             default_logs_.insert(path);
         }
     }

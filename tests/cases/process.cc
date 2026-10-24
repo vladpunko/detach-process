@@ -63,8 +63,7 @@ TEST_F(ProcessTest, LooksUpTheCommandInPath) {
     arguments.front() = "probe-command";
     arguments.insert(arguments.begin(), "--");
 
-    LaunchOptions options;
-    options.environment["PATH"] = Path(".");
+    const LaunchOptions options{.environment = {{"PATH", Path(".")}}};
 
     const auto report = Run(arguments, options);
 
@@ -74,8 +73,7 @@ TEST_F(ProcessTest, LooksUpTheCommandInPath) {
 }
 
 TEST_F(ProcessTest, MissingCommandInPathIsAnExecFailure) {
-    LaunchOptions options;
-    options.environment["PATH"] = Path(".");
+    const LaunchOptions options{.environment = {{"PATH", Path(".")}}};
 
     const auto report = Run({"--", "no-such-command"}, options);
 
@@ -113,8 +111,9 @@ TEST_F(ProcessTest, MissingScriptInterpreterIsAStartupFailure) {
 // Inherited process state.
 
 TEST_F(ProcessTest, PreservesEnvironmentVariables) {
-    LaunchOptions options;
-    options.environment["DETACH_TEST_VALUE"] = "value with spaces\nand newline";
+    const LaunchOptions options{
+        .environment = {{"DETACH_TEST_VALUE", "value with spaces\nand newline"}},
+    };
 
     const auto report = RunProbeMode("environment", {}, {"DETACH_TEST_VALUE"}, options);
 
@@ -126,8 +125,7 @@ TEST_F(ProcessTest, PreservesEnvironmentVariables) {
 }
 
 TEST_F(ProcessTest, PreservesEmptyEnvironmentVariables) {
-    LaunchOptions options;
-    options.environment["DETACH_TEST_VALUE"] = "";
+    const LaunchOptions options{.environment = {{"DETACH_TEST_VALUE", ""}}};
 
     const auto report = RunProbeMode("environment", {}, {"DETACH_TEST_VALUE"}, options);
 
@@ -159,8 +157,7 @@ TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
 }
 
 TEST_F(ProcessTest, PreservesTheFileCreationMask) {
-    LaunchOptions options;
-    options.file_creation_mask = 0027;
+    const LaunchOptions options{.file_creation_mask = 0027};
 
     const auto report = RunProbe({}, options);
 
@@ -201,8 +198,7 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
 
     const std::string descriptor_number = std::to_string(inherited.get());
 
-    LaunchOptions options;
-    options.descriptor_limit = 32;
+    const LaunchOptions options{.descriptor_limit = 32};
 
     const auto report = RunProbeMode("descriptor", {}, {descriptor_number}, options);
 
@@ -216,9 +212,8 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
 }
 
 TEST_F(ProcessTest, DescriptorExhaustionIsReportedAsAStartupFailure) {
-    LaunchOptions options;
     // One free descriptor cannot hold both ends of the startup socket.
-    options.descriptor_limit = 7;
+    const LaunchOptions options{.descriptor_limit = 7};
     const std::vector<std::string> file_options = {
         "--stdout", Path("output"),
         "--stderr", Path("errors"),
@@ -239,8 +234,7 @@ class ClosedStandardDescriptorsTest : public DetachTest,
 };
 
 TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
-    LaunchOptions options;
-    options.closed_standard_descriptors = GetParam();
+    const LaunchOptions options{.closed_standard_descriptors = GetParam()};
     const std::vector<std::string> file_options = {
         "--stdout", Path("output"),
         "--stderr", Path("errors"),

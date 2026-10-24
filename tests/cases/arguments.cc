@@ -74,8 +74,9 @@ TEST_F(ArgumentsTest, EmptyCommandIsAnExecError) {
 }
 
 TEST_F(ArgumentsTest, OptionAfterTheSeparatorIsTreatedAsACommand) {
-    LaunchOptions options;
-    options.environment["PATH"] = Path("missing-directory");
+    const LaunchOptions options{
+        .environment = {{"PATH", Path("missing-directory")}},
+    };
 
     const auto report = Run({"--", "--help"}, options);
 
@@ -122,8 +123,9 @@ TEST_F(ArgumentsTest, ShellSyntaxIsPassedLiterally) {
     // A real match makes accidental wildcard expansion visible in the output.
     Write(Path("matching-file"), "contents");
 
-    LaunchOptions options;
-    options.environment["DETACH_ARGUMENT_TEST_VALUE"] = "expanded";
+    const LaunchOptions options{
+        .environment = {{"DETACH_ARGUMENT_TEST_VALUE", "expanded"}},
+    };
     const std::vector<std::string> arguments = {
         "*",
         "$DETACH_ARGUMENT_TEST_VALUE",

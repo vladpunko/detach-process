@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <span>
 #include <string>
 #include <type_traits>
 
@@ -46,7 +47,7 @@ testing::AssertionResult WaitReadable(int fd,
 
         // Wait at least one millisecond to avoid spinning near the deadline.
         const int wait_ms = std::max(1, static_cast<int>(timeout.count()));
-        struct pollfd event = {fd, POLLIN, 0};
+        struct pollfd event = {.fd = fd, .events = POLLIN, .revents = 0};
         const int status = poll(&event, 1, wait_ms);
         if (status < 0 && errno != EINTR) {
             return CheckSysCall(status, "poll probe");
@@ -79,19 +80,18 @@ template <typename Record>
 testing::AssertionResult ReadExactly(int fd,
                                      Record& record,
                                      std::chrono::steady_clock::time_point deadline) {
-    static_assert(std::is_trivially_copyable<Record>::value,
+    static_assert(std::is_trivially_copyable_v<Record>,
                   "probe records must be safe to copy as raw bytes");
 
-    auto* next = reinterpret_cast<char*>(&record);
-    std::size_t remaining = sizeof(record);
+    auto buffer = std::as_writable_bytes(std::span{&record, 1});
 
-    while (remaining > 0) {
+    while (!buffer.empty()) {
         const auto ready = WaitReadable(fd, deadline);
         if (!ready) {
             return ready;
         }
 
-        const ssize_t bytes_read = read(fd, next, remaining);
+        const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
         if (bytes_read < 0 && errno == EINTR) {
             continue;
         }
@@ -104,8 +104,7 @@ testing::AssertionResult ReadExactly(int fd,
         }
 
         // Continue after the received bytes because socket reads can be partial.
-        next += bytes_read;
-        remaining -= static_cast<std::size_t>(bytes_read);
+        buffer = buffer.subspan(static_cast<std::size_t>(bytes_read));
     }
 
     return testing::AssertionSuccess();
@@ -125,7 +124,7 @@ void ProcessProbe::Listen(const std::string& path) {
     struct sockaddr_un address = {};
     address.sun_family = AF_UNIX;
     ASSERT_LT(path.size(), sizeof(address.sun_path));
-    std::copy(path.begin(), path.end(), address.sun_path);
+    std::ranges::copy(path, address.sun_path);
 
     auto* socket_address = reinterpret_cast<struct sockaddr*>(&address);
     const int bind_status = bind(listener_.get(), socket_address, sizeof(address));

@@ -31,8 +31,7 @@ TEST_F(SignalsTest, KeepsTheCallersDefaultSigpipeDisposition) {
 }
 
 TEST_F(SignalsTest, KeepsTheCallersIgnoredSigpipeDisposition) {
-    LaunchOptions options;
-    options.ignored_signals = {SIGPIPE};
+    const LaunchOptions options{.ignored_signals = {SIGPIPE}};
 
     const auto report = RunProbe({}, options);
 
@@ -45,8 +44,7 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredSigpipeDisposition) {
 }
 
 TEST_F(SignalsTest, KeepsTheCallersBlockedSigpipe) {
-    LaunchOptions options;
-    options.blocked_signals = {SIGPIPE};
+    const LaunchOptions options{.blocked_signals = {SIGPIPE}};
 
     const auto report = RunProbe({}, options);
 
@@ -59,9 +57,10 @@ TEST_F(SignalsTest, KeepsTheCallersBlockedSigpipe) {
 }
 
 TEST_F(SignalsTest, KeepsTheCallersIgnoredAndBlockedSigpipe) {
-    LaunchOptions options;
-    options.ignored_signals = {SIGPIPE};
-    options.blocked_signals = {SIGPIPE};
+    const LaunchOptions options{
+        .ignored_signals = {SIGPIPE},
+        .blocked_signals = {SIGPIPE},
+    };
 
     const auto report = RunProbe({}, options);
 
@@ -76,8 +75,7 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredAndBlockedSigpipe) {
 // Other inherited signals.
 
 TEST_F(SignalsTest, KeepsOtherBlockedSignals) {
-    LaunchOptions options;
-    options.blocked_signals = {SIGUSR1};
+    const LaunchOptions options{.blocked_signals = {SIGUSR1}};
 
     const auto report = RunProbe({}, options);
 
@@ -90,8 +88,7 @@ TEST_F(SignalsTest, KeepsOtherBlockedSignals) {
 }
 
 TEST_F(SignalsTest, WorksWhenTheCallerIgnoresSigchld) {
-    LaunchOptions options;
-    options.ignored_signals = {SIGCHLD};
+    const LaunchOptions options{.ignored_signals = {SIGCHLD}};
 
     const auto report = RunProbe({}, options);
 
@@ -101,8 +98,7 @@ TEST_F(SignalsTest, WorksWhenTheCallerIgnoresSigchld) {
 }
 
 TEST_F(SignalsTest, KeepsTheCallersIgnoredSighupDisposition) {
-    LaunchOptions options;
-    options.ignored_signals = {SIGHUP};
+    const LaunchOptions options{.ignored_signals = {SIGHUP}};
 
     const auto report = RunProbe({}, options);
 
@@ -114,9 +110,10 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredSighupDisposition) {
 // Combined dispositions and blocked signals.
 
 TEST_F(SignalsTest, PreservesCombinedSignalState) {
-    LaunchOptions options;
-    options.ignored_signals = {SIGPIPE, SIGCHLD, SIGHUP};
-    options.blocked_signals = {SIGPIPE, SIGUSR1};
+    const LaunchOptions options{
+        .ignored_signals = {SIGPIPE, SIGCHLD, SIGHUP},
+        .blocked_signals = {SIGPIPE, SIGUSR1},
+    };
 
     const auto report = RunProbe({}, options);
 

@@ -55,10 +55,26 @@ struct ProtectedFile {
 };
 
 constexpr ProtectedFile kProtectedFiles[] = {
-    {"input", "keep stdin\n", 0640},
-    {"output", "keep stdout\n", 0604},
-    {"errors", "keep stderr\n", 0644},
-    {"pid", "keep pid\n", 0600},
+    {
+        .name = "input",
+        .contents = "keep stdin\n",
+        .permissions = 0640,
+    },
+    {
+        .name = "output",
+        .contents = "keep stdout\n",
+        .permissions = 0604,
+    },
+    {
+        .name = "errors",
+        .contents = "keep stderr\n",
+        .permissions = 0644,
+    },
+    {
+        .name = "pid",
+        .contents = "keep pid\n",
+        .permissions = 0600,
+    },
 };
 
 constexpr char kCombinedContents[] = "stdout one\nstderr one\nstdout two\nstderr two\n";
@@ -133,7 +149,7 @@ std::vector<SharedOutputCase> MakeSharedOutputCases() {
     std::vector<SharedOutputCase> cases;
     for (AliasKind kind : kAliasKinds) {
         for (bool write_pid : {false, true}) {
-            cases.push_back({kind, write_pid});
+            cases.push_back({.kind = kind, .write_pid = write_pid});
         }
     }
     return cases;
@@ -197,7 +213,7 @@ std::vector<PidAliasCase> MakePidAliasCases() {
     std::vector<PidAliasCase> cases;
     for (const char* target : {"input", "output", "errors"}) {
         for (AliasKind kind : kAliasKinds) {
-            cases.push_back({target, kind});
+            cases.push_back({.target = target, .kind = kind});
         }
     }
     return cases;
@@ -251,7 +267,8 @@ std::vector<InputAliasCase> MakeInputAliasCases() {
     for (const char* option : {"--stdout", "--stderr"}) {
         for (AliasKind kind : kAliasKinds) {
             for (bool write_pid : {false, true}) {
-                cases.push_back({option, kind, write_pid});
+                cases.push_back(
+                    {.option = option, .kind = kind, .write_pid = write_pid});
             }
         }
     }
