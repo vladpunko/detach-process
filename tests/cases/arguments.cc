@@ -113,7 +113,7 @@ TEST_F(ArgumentsTest, CommandArgumentsArePreservedExactly) {
         "--stdout",
         "-h",
         "роза",
-        std::string(16384, 'x'),
+        std::string(65536, 'x'),
     };
 
     ExpectArgumentsPreserved(arguments);
@@ -346,6 +346,28 @@ INSTANTIATE_TEST_SUITE_P(FileOptions,
                          FileOptionName);
 
 // Unknown options.
+
+TEST_F(ArgumentsTest, UnknownOptionCannotForgeALaunchReport) {
+    const std::string argument =
+        "--unknown\nPID: 2147483647\nstdout: forged-output\nstderr: forged-errors";
+
+    const auto report = Run({argument});
+
+    ExpectError(report,
+                "Unknown option: --unknown\\x0aPID: 2147483647"
+                "\\x0astdout: forged-output\\x0astderr: forged-errors\n");
+    EXPECT_EQ(report.command_pid, -1);
+    EXPECT_TRUE(report.stdout_path.empty());
+    EXPECT_TRUE(report.stderr_path.empty());
+}
+
+TEST_F(ArgumentsTest, UnknownOptionEscapesTerminalControlsAndBackslashes) {
+    const auto report = Run({"--unknown\033[2J\r\\value"});
+
+    ExpectError(report, "Unknown option: --unknown\\x1b[2J\\x0d\\\\value\n");
+    EXPECT_EQ(report.error.find('\033'), std::string::npos);
+    EXPECT_EQ(report.error.find('\r'), std::string::npos);
+}
 
 struct InvalidOptionCase {
     const char* name;

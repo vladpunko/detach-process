@@ -4,6 +4,8 @@
 // Created date: 2021-07-04
 
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+#define _DARWIN_C_SOURCE
 
 #include <dirent.h>
 #include <errno.h>
@@ -16,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -110,6 +113,26 @@ static bool set_file_option(const char** path, const char* value, const char* na
     return true;
 }
 
+// Escapes bytes that could forge report lines or control terminal output.
+// Backslashes are doubled so literal escape sequences remain distinguishable.
+static bool print_escaped_text(FILE* stream, const char* text) {
+    const unsigned char* byte = (const unsigned char*)text;
+    for (; *byte != '\0'; byte += 1) {
+        int written;
+        if (*byte == '\\') {
+            written = fputs("\\\\", stream);
+        } else if (*byte < ' ' || *byte == ASCII_DELETE) {
+            written = fprintf(stream, "\\x%02x", (unsigned int)*byte);
+        } else {
+            written = fputc(*byte, stream);
+        }
+        if (written < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Validates launcher options before any files are opened or changed.
 static enum parse_result parse_arguments(int argc,
                                          char* argv[],
@@ -151,7 +174,9 @@ static enum parse_result parse_arguments(int argc,
                 return PARSE_ERROR;
             case '?':
                 // Grouped short options can leave `optind` on the current argument.
-                fprintf(stderr, "Unknown option: %s\n", argv[option_index]);
+                fputs("Unknown option: ", stderr);
+                print_escaped_text(stderr, argv[option_index]);
+                fputc('\n', stderr);
                 print_usage(stderr);
                 return PARSE_ERROR;
             default:
@@ -296,13 +321,12 @@ static bool validate_file_aliases(const struct launch_files* files) {
 
 // Clears validated logs and shares the offset of aliased output streams.
 static bool prepare_output_files(const struct launch_files* files) {
-    if (!reset_regular_file(&files->output, "stdout") ||
-        !reset_regular_file(&files->errors, "stderr")) {
+    if (!reset_regular_file(&files->output, "stdout")) {
         return false;
     }
 
     if (!is_same_file(&files->output.stats, &files->errors.stats)) {
-        return true;
+        return reset_regular_file(&files->errors, "stderr");
     }
 
     // Share the offset so writes through one stream cannot overwrite the other.
@@ -411,8 +435,9 @@ static bool redirect_standard_descriptor(int source_fd,
         return false;
     }
 
-    if (source_fd != target_fd) {
-        close(source_fd);
+    if (source_fd != target_fd && close(source_fd) < 0) {
+        perror(label);
+        return false;
     }
 
     return true;
@@ -642,29 +667,9 @@ static void print_error_log(int fd) {
     }
 }
 
-// Escapes path bytes that could add report lines or control terminal output.
-// Backslashes are doubled so literal escape sequences remain distinguishable.
-static bool print_escaped_path(FILE* stream, const char* path) {
-    const unsigned char* byte = (const unsigned char*)path;
-    for (; *byte != '\0'; byte += 1) {
-        int written;
-        if (*byte == '\\') {
-            written = fputs("\\\\", stream);
-        } else if (*byte < ' ' || *byte == ASCII_DELETE) {
-            written = fprintf(stream, "\\x%02x", (unsigned int)*byte);
-        } else {
-            written = fputc(*byte, stream);
-        }
-        if (written < 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // Keeps a labeled path on one line in reports and startup diagnostics.
 static bool print_path_line(FILE* stream, const char* label, const char* path) {
-    return fprintf(stream, "%s: ", label) >= 0 && print_escaped_path(stream, path) &&
+    return fprintf(stream, "%s: ", label) >= 0 && print_escaped_text(stream, path) &&
            fputc('\n', stream) != EOF;
 }
 
@@ -712,10 +717,24 @@ static bool print_launch_report(pid_t pid, const struct launch_files* files) {
 static int run_launcher(pid_t intermediate_pid,
                         int startup_fd,
                         int command_fd,
-                        const struct launch_files* files) {
-    close(files->input.fd);
+                        const struct launch_files* files,
+                        const int* startup_failed) {
+    bool endpoints_closed = true;
+    if (close(files->input.fd) < 0) {
+        perror("stdin");
+        endpoints_closed = false;
+    }
     // Close the command endpoint so `exec` can produce `EOF` on the channel.
-    close(command_fd);
+    if (close(command_fd) < 0) {
+        perror("startup channel");
+        endpoints_closed = false;
+    }
+    if (!endpoints_closed) {
+        // Release the command before waiting for its parent to finish.
+        close(startup_fd);
+        reap_intermediate_process(intermediate_pid);
+        return fail_startup(files);
+    }
 
     pid_t command_pid = -1;
     const bool pid_received = receive_process_id(startup_fd, &command_pid);
@@ -734,8 +753,8 @@ static int run_launcher(pid_t intermediate_pid,
         return fail_startup(files);
     }
 
-    // `EOF` can follow `exec` or an early command exit.
-    // Only a received failure byte proves a reported setup or `exec` failure.
+    // The shared flag detects unfinished setup even without a failure byte.
+    // An unreported death after attempting `execvp` remains uncertain.
     char failure_marker;
     const ssize_t status_length = read_startup_byte(startup_fd, &failure_marker);
     if (status_length < 0) {
@@ -745,7 +764,7 @@ static int run_launcher(pid_t intermediate_pid,
         return EXIT_FAILURE;
     }
     close(startup_fd);
-    if (status_length > 0) {
+    if (status_length > 0 || __atomic_load_n(startup_failed, __ATOMIC_ACQUIRE)) {
         print_startup_error(files);
         return fail_startup(files);
     }
@@ -755,8 +774,6 @@ static int run_launcher(pid_t intermediate_pid,
         return EXIT_FAILURE;
     }
 
-    close(files->output.fd);
-    close(files->errors.fd);
     return EXIT_SUCCESS;
 }
 
@@ -764,8 +781,10 @@ static int run_launcher(pid_t intermediate_pid,
 static int run_detached_command(char* const command[],
                                 int startup_fd,
                                 const struct launch_files* files,
-                                const struct sigpipe_state* sigpipe) {
+                                const struct sigpipe_state* sigpipe,
+                                int* startup_failed) {
     if (!send_process_id(startup_fd, getpid())) {
+        __atomic_store_n(startup_failed, true, __ATOMIC_RELEASE);
         return fail_startup(files);
     }
 
@@ -777,7 +796,7 @@ static int run_detached_command(char* const command[],
     // `EOF` or an invalid byte means the launcher did not permit execution.
     if (permission_length != sizeof(start_permission) ||
         start_permission != START_COMMAND) {
-        return fail_startup(files);
+        goto failed;
     }
 
     if (!prepare_command_streams(files, startup_fd)) {
@@ -788,10 +807,13 @@ static int run_detached_command(char* const command[],
         goto failed;
     }
 
+    // Preparation is complete, but an abrupt death during `execvp` remains uncertain.
+    __atomic_store_n(startup_failed, false, __ATOMIC_RELEASE);
     execvp(command[0], command);
 
     // Failed `exec` returns here. Protect diagnostics from `SIGPIPE` again.
     const int exec_error = errno;
+    __atomic_store_n(startup_failed, true, __ATOMIC_RELEASE);
     if (sigaction(SIGPIPE, &sigpipe->ignored, NULL) < 0) {
         goto failed;
     }
@@ -799,6 +821,8 @@ static int run_detached_command(char* const command[],
     perror("exec");
 
 failed:
+    // Publish the failure before cleanup or channel errors can hide it.
+    __atomic_store_n(startup_failed, true, __ATOMIC_RELEASE);
     // Finish cleanup diagnostics before the launcher starts reading its log.
     fail_startup(files);
     report_startup_failure(startup_fd);
@@ -810,9 +834,14 @@ static int run_session_child(char* const command[],
                              int launcher_fd,
                              int startup_fd,
                              const struct launch_files* files,
-                             const struct sigpipe_state* sigpipe) {
+                             const struct sigpipe_state* sigpipe,
+                             int* startup_failed) {
     // Retaining the parent's endpoint would hide its exit from the command.
-    close(launcher_fd);
+    if (close(launcher_fd) < 0) {
+        perror("startup channel");
+        send_process_id(startup_fd, 0);
+        return fail_startup(files);
+    }
     if (files->pid.path != NULL) {
         close(files->pid.fd);
     }
@@ -835,7 +864,7 @@ static int run_session_child(char* const command[],
         _exit(EXIT_SUCCESS);
     }
 
-    return run_detached_command(command, startup_fd, files, sigpipe);
+    return run_detached_command(command, startup_fd, files, sigpipe, startup_failed);
 }
 
 // Creates a startup channel and separates the launcher from its session child.
@@ -854,16 +883,28 @@ static int launch_command(char* const command[],
         return fail_startup(files);
     }
 
+    // The shared mapping lives until each process exits or executes the command.
+    // Atomic accesses keep failures visible if the socket send fails.
+    int* startup_failed = mmap(NULL, sizeof(*startup_failed), PROT_READ | PROT_WRITE,
+                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (startup_failed == MAP_FAILED) {
+        perror("startup state");
+        return fail_startup(files);
+    }
+    *startup_failed = true;
+
     const pid_t intermediate_pid = fork();
     if (intermediate_pid < 0) {
         perror("fork");
         return fail_startup(files);
     }
     if (intermediate_pid == 0) {
-        return run_session_child(command, launcher_fd, command_fd, files, sigpipe);
+        return run_session_child(command, launcher_fd, command_fd, files, sigpipe,
+                                 startup_failed);
     }
 
-    return run_launcher(intermediate_pid, launcher_fd, command_fd, files);
+    return run_launcher(intermediate_pid, launcher_fd, command_fd, files,
+                        startup_failed);
 }
 
 // Runs the startup stages in order: parse options, protect diagnostics,

@@ -51,6 +51,20 @@ TEST_F(ProcessTest, LauncherReturnsWhileTheCommandIsStillRunning) {
     PingProbe();
 }
 
+TEST_F(ProcessTest, ImmediateCommandExitIsStillASuccessfulLaunch) {
+    for (const int exit_code : {0, 37}) {
+        SCOPED_TRACE(exit_code);
+
+        const auto report =
+            Run({"--", "/bin/sh", "-c", "exit " + std::to_string(exit_code)});
+
+        EXPECT_EQ(report.exit_code, 0)
+            << report.error;
+        EXPECT_GT(report.command_pid, 0);
+        EXPECT_TRUE(report.error.empty());
+    }
+}
+
 // Command lookup and scripts.
 
 TEST_F(ProcessTest, LooksUpTheCommandInPath) {
@@ -65,6 +79,30 @@ TEST_F(ProcessTest, LooksUpTheCommandInPath) {
 
     const LaunchOptions options{.environment = {{"PATH", Path(".")}}};
 
+    const auto report = Run(arguments, options);
+
+    ASSERT_EQ(report.exit_code, 0)
+        << report.error;
+    EXPECT_EQ(ReadProbe().pid, report.command_pid);
+}
+
+TEST_F(ProcessTest, SkipsUnusablePathCandidatesBeforeStartingTheCommand) {
+    ASSERT_TRUE(CheckSysCall(mkdir(Path("denied").c_str(), 0700),
+                            "create PATH directory"));
+    ASSERT_NO_FATAL_FAILURE(Write(Path("denied/probe-command"), "not executable\n"));
+    ASSERT_TRUE(CheckSysCall(chmod(Path("denied/probe-command").c_str(), 0600),
+                            "remove execute permission"));
+
+    auto arguments = ProbeCommand();
+    const std::string link_path = Path("probe-command");
+    const int status = symlink(arguments.front().c_str(), link_path.c_str());
+    ASSERT_TRUE(CheckSysCall(status, "create command link"));
+    arguments.front() = "probe-command";
+    arguments.insert(arguments.begin(), "--");
+
+    const std::string search_path =
+        Path("denied") + ":" + Path("missing") + ":" + Path(".");
+    const LaunchOptions options{.environment = {{"PATH", search_path}}};
     const auto report = Run(arguments, options);
 
     ASSERT_EQ(report.exit_code, 0)

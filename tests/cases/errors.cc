@@ -276,6 +276,46 @@ const ErrorCase kStartupFailures[] = {
 
     // Startup socket and processes.
     {
+        .name = "StartupMemory",
+        .fault = {
+            .operation = "mmap",
+            .role = ProcessRole::kLauncher,
+            .call_number = 1,
+            .result = ENOMEM,
+        },
+        .expected_diagnostic = "startup state:",
+    },
+    {
+        .name = "CloseLauncherInput",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kLauncher,
+            .call_number = 1,
+            .result = EIO,
+        },
+        .expected_diagnostic = "stdin:",
+    },
+    {
+        .name = "CloseCommandEndpoint",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kLauncher,
+            .call_number = 2,
+            .result = EIO,
+        },
+        .expected_diagnostic = "startup channel:",
+    },
+    {
+        .name = "CloseLauncherEndpoint",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kIntermediate,
+            .call_number = 1,
+            .result = EIO,
+        },
+        .expected_diagnostic = "failed to start the command",
+    },
+    {
         .name = "StartupSocket",
         .fault = {
             .operation = "socketpair",
@@ -399,6 +439,36 @@ const ErrorCase kStartupFailures[] = {
     },
 
     // Command streams.
+    {
+        .name = "CloseRedirectedInput",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kCommand,
+            .call_number = 1,
+            .result = EINTR,
+        },
+        .expected_diagnostic = "stdin:",
+    },
+    {
+        .name = "CloseRedirectedOutput",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kCommand,
+            .call_number = 2,
+            .result = EIO,
+        },
+        .expected_diagnostic = "stdout:",
+    },
+    {
+        .name = "CloseRedirectedErrors",
+        .fault = {
+            .operation = "close",
+            .role = ProcessRole::kCommand,
+            .call_number = 3,
+            .result = EIO,
+        },
+        .expected_diagnostic = "stderr:",
+    },
     {
         .name = "RedirectStdin",
         .fault = {
@@ -639,6 +709,35 @@ INSTANTIATE_TEST_SUITE_P(StartupChannel,
                          testing::ValuesIn(kStartupRetries),
                          RetryName);
 
+TEST_F(CommandErrorTest, RetriesPartialPidTransfersAcrossInterruptions) {
+    const auto options = Inject({
+        {"send", ProcessRole::kCommand, 1, FAULT_SHORT_IO},
+        {"send", ProcessRole::kCommand, 2, EINTR},
+        {"read", ProcessRole::kLauncher, 1, FAULT_SHORT_IO},
+        {"read", ProcessRole::kLauncher, 2, EINTR},
+    });
+
+    const auto report = RunProbeMode("streams", {}, {}, options);
+
+    ASSERT_EQ(report.exit_code, 0)
+        << report.error;
+    ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
+}
+
+TEST_F(ErrorTest, ErrorAfterPartialPidTransferDoesNotStartTheCommand) {
+    const auto options = Inject({
+        {"send", ProcessRole::kCommand, 1, FAULT_SHORT_IO},
+        {"send", ProcessRole::kCommand, 2, EIO},
+    });
+
+    const auto report = RunProbe({}, options);
+
+    ExpectError(report, "failed to start the command");
+    EXPECT_EQ(report.command_pid, -1);
+    EXPECT_TRUE(report.output.empty());
+    ExpectTemporaryFilesRemoved();
+}
+
 TEST_F(ErrorTest, RedirectingADescriptorToItselfKeepsItOpen) {
     auto options = FaultOptions();
     options.environment["DETACH_TEST_HELPER"] = "same-descriptor";
@@ -847,9 +946,52 @@ TEST_F(CommandErrorTest, StatusReadErrorPreservesThePossiblyRunningCommand) {
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 
-// Startup protocol limits.
+// Startup protocol errors.
 
-TEST_F(ErrorTest, LostFailureReportHasTheDocumentedEofStartupStatus) {
+TEST_F(ErrorTest, KilledDuringPermissionWaitDoesNotReportSuccess) {
+    const auto options = Inject({"read", ProcessRole::kCommand, 1, FAULT_TERMINATE});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    EXPECT_EQ(report.exit_code, 1)
+        << report.error;
+    EXPECT_FALSE(report.error.empty());
+    EXPECT_TRUE(report.output.empty());
+}
+
+TEST_F(ErrorTest, KilledDuringStreamSetupDoesNotReportSuccess) {
+    const auto options = Inject({"dup2", ProcessRole::kCommand, 1, FAULT_TERMINATE});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    ExpectError(report, "failed to start the command");
+    EXPECT_EQ(report.command_pid, -1);
+    EXPECT_TRUE(report.output.empty());
+    ExpectTemporaryFilesRemoved();
+}
+
+TEST_F(ErrorTest, UnreportedDeathAtExecHasTheDocumentedStartupStatus) {
+    const auto options = Inject({"execvp", ProcessRole::kCommand, 1, FAULT_TERMINATE});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    EXPECT_EQ(report.exit_code, 0)
+        << report.error;
+    EXPECT_GT(report.command_pid, 0);
+    EXPECT_TRUE(report.error.empty());
+}
+
+TEST_F(ErrorTest, ReturnedExecErrorStillReportsFailure) {
+    const auto options = Inject({"execvp", ProcessRole::kCommand, 1, EACCES});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    ExpectError(report, "exec:");
+    EXPECT_EQ(report.command_pid, -1);
+    ExpectTemporaryFilesRemoved();
+}
+
+TEST_F(ErrorTest, LostFailureReportStillReportsAnExecError) {
     const auto options = Inject({"send", ProcessRole::kCommand, 2, EPIPE});
     const std::vector<std::string> arguments = {
         "--stdout", Path("output"),
@@ -859,15 +1001,47 @@ TEST_F(ErrorTest, LostFailureReportHasTheDocumentedEofStartupStatus) {
 
     const auto report = Run(arguments, options);
 
-    // Without a failure byte, `EOF` cannot distinguish `exec` from an early exit.
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    ExpectError(report, "failed to start the command");
+    EXPECT_EQ(report.command_pid, -1);
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "exec:", Read(Path("errors")));
 }
 
-// An invalid permission byte stops the command before `exec`.
-// The parent sees `EOF` without a failure byte and reports startup success.
-TEST_F(ErrorTest, InvalidPermissionStopsTheCommandBeforeExec) {
+TEST_F(ErrorTest, LostFailureReportStillRemovesTemporaryLogs) {
+    const auto options = Inject({"send", ProcessRole::kCommand, 2, EIO});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    ExpectError(report, "exec:");
+    EXPECT_EQ(report.command_pid, -1);
+    EXPECT_TRUE(report.output.empty());
+    ExpectTemporaryFilesRemoved();
+}
+
+TEST_F(ErrorTest, EmptyFailureReportStillReportsAnExecError) {
+    const auto options = Inject({"send", ProcessRole::kCommand, 2, FAULT_EOF});
+
+    const auto report = Run({"--", Path("missing-command")}, options);
+
+    ExpectError(report, "exec:");
+    EXPECT_EQ(report.command_pid, -1);
+    ExpectTemporaryFilesRemoved();
+}
+
+TEST_F(ErrorTest, LostFailureReportStillReportsAStreamSetupError) {
+    const auto options = Inject({
+        {"dup2", ProcessRole::kCommand, 1, EBADF},
+        {"send", ProcessRole::kCommand, 2, EPIPE},
+    });
+
+    const auto report = RunProbe({}, options);
+
+    ExpectError(report, "stdin:");
+    EXPECT_EQ(report.command_pid, -1);
+    ExpectTemporaryFilesRemoved();
+}
+
+// An invalid permission must reach the launcher as a startup failure.
+TEST_F(ErrorTest, InvalidPermissionReportsAStartupFailure) {
     const auto options =
         Inject({"read", ProcessRole::kCommand, 1, FAULT_BAD_PERMISSION});
     const std::vector<std::string> arguments = {
@@ -878,10 +1052,23 @@ TEST_F(ErrorTest, InvalidPermissionStopsTheCommandBeforeExec) {
 
     const auto report = Run(arguments, options);
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    ExpectError(report, "failed to start the command");
+    EXPECT_EQ(report.command_pid, -1);
     EXPECT_TRUE(Read(Path("errors")).empty());
     EXPECT_TRUE(Read(Path("output")).empty());
+}
+
+TEST_F(ErrorTest, InvalidPermissionAndLostFailureReportStillFailStartup) {
+    const auto options = Inject({
+        {"read", ProcessRole::kCommand, 1, FAULT_BAD_PERMISSION},
+        {"send", ProcessRole::kCommand, 2, EIO},
+    });
+
+    const auto report = RunProbe({}, options);
+
+    ExpectError(report, "failed to start the command");
+    EXPECT_EQ(report.command_pid, -1);
+    ExpectTemporaryFilesRemoved();
 }
 
 // Option parser edge cases.

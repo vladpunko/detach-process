@@ -86,8 +86,9 @@ No startup error was reported.
 An error was encountered.
 .PP
 The exit status describes startup, not the program's eventual exit status.
-An abrupt termination before exec may close the startup channel without
-reporting an error.
+An abrupt termination during preparation is reported as a startup error.
+Once exec has been attempted, an unreported abrupt termination may still
+result in status 0.
 .SH EXAMPLES
 Start a ping command detached from the current session:
 .PP

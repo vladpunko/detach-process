@@ -4,6 +4,8 @@
 // Created date: 2026-10-21
 
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+#define _DARWIN_C_SOURCE
 
 // Simulates system call failures to test how `detach` handles them.
 // Reads the failure rules from `DETACH_TEST_FAULTS`.
@@ -22,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -189,6 +192,11 @@ static const struct fault_rule* apply_fault(const char* operation) {
 
     record_fault(selected);
 
+    if (selected->result == FAULT_TERMINATE) {
+        kill(getpid(), SIGKILL);
+        _exit(SETUP_ERROR_EXIT_CODE);
+    }
+
     if (selected->result > 0) {
         errno = selected->result;
     }
@@ -248,6 +256,9 @@ static void fault_exit(int status) {
 // Flushes setup coverage before a successful `exec` replaces the test code.
 static int fault_execvp(const char* file, char* const argv[]) {
     write_profile();
+    if (apply_fault("execvp") != NULL) {
+        return -1;
+    }
     return execvp(file, argv);
 }
 
@@ -353,9 +364,30 @@ static int fault_fcntl(int fd, int command, ...) {
     return fcntl(fd, command, flags);
 }
 
-// Makes a selected descriptor close fail to exercise cleanup diagnostics.
+// Releases the descriptor once, then simulates a delayed close error.
 static int fault_close(int fd) {
-    return apply_fault("close") != NULL ? -1 : close(fd);
+    const struct fault_rule* rule = apply_fault("close");
+    const int status = close(fd);
+    if (rule != NULL) {
+        errno = rule->result;
+        return -1;
+    }
+
+    return status;
+}
+
+// Simulates failure to allocate shared startup status before any fork.
+static void* fault_mmap(void* address,
+                        size_t length,
+                        int protection,
+                        int flags,
+                        int fd,
+                        off_t offset) {
+    if (apply_fault("mmap") != NULL) {
+        return MAP_FAILED;
+    }
+
+    return mmap(address, length, protection, flags, fd, offset);
 }
 
 // Makes stream redirection or shared-offset setup fail at a chosen call.
@@ -589,6 +621,7 @@ static int fault_getopt_long(int argc,
 #define open fault_open
 #define fcntl fault_fcntl
 #define close fault_close
+#define mmap fault_mmap
 #define dup2 fault_dup2
 #define fstat fault_fstat
 #define strtoimax fault_strtoimax
