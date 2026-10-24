@@ -18,29 +18,41 @@ namespace {
 
 class TerminalTest : public DetachTest {
 protected:
-    // Opens a real pseudoterminal to test release of the controlling terminal.
+    // Prepares the test listener and terminal before launching a command.
     void SetUp() override {
         ASSERT_NO_FATAL_FAILURE(DetachTest::SetUp());
-
-        master_.Reset(posix_openpt(O_RDWR | O_NOCTTY));
-        ASSERT_TRUE(CheckSysCall(master_.get(), "posix_openpt"));
-        const int status = fcntl(master_.get(), F_SETFD, FD_CLOEXEC);
-        ASSERT_TRUE(CheckSysCall(status, "set terminal close-on-exec"));
-
-        ASSERT_TRUE(CheckSysCall(grantpt(master_.get()), "grantpt"));
-        ASSERT_TRUE(CheckSysCall(unlockpt(master_.get()), "unlockpt"));
-        const char* path = ptsname(master_.get());
-        ASSERT_NE(path, nullptr);
-        slave_path_ = path;
+        ASSERT_NO_FATAL_FAILURE(OpenMasterTerminal());
+        ASSERT_NO_FATAL_FAILURE(PrepareSlaveTerminal());
     }
 
     FileDescriptor master_;
     std::string slave_path_;
+
+private:
+    // Opens the master so tests can trigger a terminal hangup by closing it.
+    void OpenMasterTerminal() {
+        const int fd = posix_openpt(O_RDWR | O_NOCTTY);
+        master_.Reset(fd);
+        ASSERT_TRUE(CheckSysCall(fd, "open terminal master"));
+
+        const int status = fcntl(master_.get(), F_SETFD, FD_CLOEXEC);
+        ASSERT_TRUE(CheckSysCall(status, "set terminal close-on-exec"));
+    }
+
+    // Grants access to the slave terminal and saves its path for the launcher.
+    void PrepareSlaveTerminal() {
+        ASSERT_TRUE(CheckSysCall(grantpt(master_.get()), "grant terminal access"));
+        ASSERT_TRUE(CheckSysCall(unlockpt(master_.get()), "unlock slave terminal"));
+
+        const char* path = ptsname(master_.get());
+        ASSERT_NE(path, nullptr)
+            << "cannot get slave terminal path";
+        slave_path_ = path;
+    }
 };
 
 TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
-    LaunchOptions options;
-    options.terminal_path = slave_path_;
+    const LaunchOptions options{.terminal_path = slave_path_};
 
     const auto report = RunProbe({}, options);
 
@@ -54,8 +66,7 @@ TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
 }
 
 TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
-    LaunchOptions options;
-    options.terminal_path = slave_path_;
+    const LaunchOptions options{.terminal_path = slave_path_};
 
     const auto report = RunProbe({}, options);
 
