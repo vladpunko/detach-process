@@ -205,8 +205,7 @@ TEST_F(ArgumentsTest, RepeatedInputUsesTheLastPathBeforeOpeningFiles) {
     const std::string contents = "selected input\n";
     Write(Path("selected"), contents);
     const std::vector<std::string> options = {
-        "--stdin",
-        Path("missing"),
+        "--stdin", Path("missing"),
         "--stdin=" + Path("selected"),
     };
 
