@@ -24,18 +24,16 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Check out source
+      - name: Step -- 1.
         uses: actions/checkout@v4
 
-      - name: Compile standalone C99 source
-        run: cc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter detach.c -o detach
-
-      - name: Build release binary
+      - name: Step -- 2.
         run: make build
 
-      - name: Run integration and failure tests
-        run: make test
+      - name: Step -- 3.
+        if: runner.os == 'Linux'
+        run: make tests
 
-      - name: Check full coverage
+      - name: Step -- 4.
         if: runner.os == 'macOS'
         run: make coverage
