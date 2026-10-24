@@ -26,6 +26,7 @@ trap 'exit 134' ABRT
 trap 'exit 143' TERM
 
 # Step -- 1.
+echo 'downloading source'
 git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-process.git "${workdir}" > /dev/null 2>&1 || {
   echo 'An error occurred while downloading the source code to the current machine.' >&2
   # Stop this program runtime and return the exit status code.
@@ -33,13 +34,18 @@ git clone --depth=1 --branch=master -- https://github.com/vladpunko/detach-proce
 }
 
 # Step -- 2.
+echo 'building and running tests'
 make -C "${workdir}" tests BUILD_TYPE=Release
 
 # Step -- 3.
+echo 'installing /usr/local/bin/detach'
 umask 022
 mkdir -p /usr/local/bin
 install -m 755 "${workdir}/build/testing/detach" /usr/local/bin/detach
 
 # Step -- 4.
+echo 'installing /usr/local/share/man/man1/detach.1'
 mkdir -p /usr/local/share/man/man1
 install -m 644 "${workdir}/detach.1" /usr/local/share/man/man1/detach.1
+
+echo 'done'
