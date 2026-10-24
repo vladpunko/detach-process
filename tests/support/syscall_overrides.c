@@ -508,6 +508,11 @@ static intmax_t fault_strtoimax(const char* text, char** end, int base) {
 
 // Formatted output.
 
+// Makes a path byte or its final newline fail while forwarding other output.
+static int fault_fputc(int byte, FILE* stream) {
+    return apply_fault("fputc") != NULL ? EOF : fputc(byte, stream);
+}
+
 // Makes formatted help output fail while forwarding unrelated writes.
 static int fault_fprintf(FILE* stream, const char* format, ...) {
     if (apply_fault("fprintf") != NULL) {
@@ -599,6 +604,7 @@ static int fault_getopt_long(int argc,
 #define unlink fault_unlink
 #define lseek fault_lseek
 #define fclose fault_fclose
+#define fputc fault_fputc
 #define fprintf fault_fprintf
 #define printf fault_printf
 #define dprintf fault_dprintf
