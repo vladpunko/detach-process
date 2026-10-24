@@ -31,22 +31,25 @@ function(run_checked program)
     endif()
 endfunction()
 
-# Fresh profiles prevent an earlier run from hiding a coverage gap.
 set(profile_directory "${BUILD_DIR}/profiles")
 set(merged_profile "${BUILD_DIR}/coverage.profdata")
 set(report "${BUILD_DIR}/coverage.lcov")
-file(REMOVE_RECURSE "${profile_directory}")
 file(REMOVE "${merged_profile}" "${report}")
-file(MAKE_DIRECTORY "${profile_directory}")
 
-set(ctest_arguments --output-on-failure --parallel 2)
-if(NOT "${CONFIG}" STREQUAL "")
-    list(APPEND ctest_arguments -C "${CONFIG}")
+# Fresh profiles prevent an earlier run from hiding a coverage gap.
+if(NOT DEFINED RUN_TESTS OR RUN_TESTS)
+    file(REMOVE_RECURSE "${profile_directory}")
+    file(MAKE_DIRECTORY "${profile_directory}")
+
+    set(ctest_arguments --output-on-failure --parallel 2)
+    if(NOT "${CONFIG}" STREQUAL "")
+        list(APPEND ctest_arguments -C "${CONFIG}")
+    endif()
+    run_checked("${CMAKE_COMMAND}" -E env
+        "LLVM_PROFILE_FILE=${profile_directory}/%m-%p.profraw"
+        "${CMAKE_CTEST_COMMAND}" ${ctest_arguments}
+    )
 endif()
-run_checked("${CMAKE_COMMAND}" -E env
-    "LLVM_PROFILE_FILE=${profile_directory}/%m-%p.profraw"
-    "${CMAKE_CTEST_COMMAND}" ${ctest_arguments}
-)
 
 file(GLOB profiles "${profile_directory}/*.profraw")
 if(NOT profiles)

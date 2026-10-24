@@ -55,18 +55,32 @@ target_compile_options(detach_faults PRIVATE
 )
 target_link_options(detach_faults PRIVATE -fprofile-instr-generate)
 
-# Keep test execution, profile merging and the strict coverage check together.
+set(coverage_settings
+    "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+    "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/detach.c"
+    "-DCOVERAGE_EXECUTABLE=$<TARGET_FILE:detach_faults>"
+    "-DLLVM_PROFDATA=${LLVM_PROFDATA}"
+    "-DLLVM_COV=${LLVM_COV}"
+    "-DCONFIG=$<CONFIG>"
+)
+
+# Run tests and generate the coverage report.
 add_custom_target(coverage
-    COMMAND "${CMAKE_COMMAND}"
-        "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
-        "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/detach.c"
-        "-DCOVERAGE_EXECUTABLE=$<TARGET_FILE:detach_faults>"
-        "-DLLVM_PROFDATA=${LLVM_PROFDATA}"
-        "-DLLVM_COV=${LLVM_COV}"
-        "-DCONFIG=$<CONFIG>"
+    COMMAND "${CMAKE_COMMAND}" ${coverage_settings}
         -P "${CMAKE_CURRENT_LIST_DIR}/run_coverage.cmake"
     DEPENDS detach_tests
     COMMENT "run tests and verify full line, function and branch coverage of detach.c"
+    USES_TERMINAL
+    VERBATIM
+)
+
+# Reuse profiles when the caller has already run the tests.
+add_custom_target(coverage_report
+    COMMAND "${CMAKE_COMMAND}" ${coverage_settings}
+        -DRUN_TESTS=OFF
+        -P "${CMAKE_CURRENT_LIST_DIR}/run_coverage.cmake"
+    DEPENDS detach_tests
+    COMMENT "verify coverage from collected test profiles"
     USES_TERMINAL
     VERBATIM
 )
