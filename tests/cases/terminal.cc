@@ -45,8 +45,7 @@ private:
         ASSERT_TRUE(CheckSysCall(unlockpt(master_.get()), "unlock slave terminal"));
 
         const char* path = ptsname(master_.get());
-        ASSERT_NE(path, nullptr)
-            << "cannot get slave terminal path";
+        ASSERT_NE(path, nullptr) << "cannot get slave terminal path";
         slave_path_ = path;
     }
 };
@@ -56,8 +55,7 @@ TEST_F(TerminalTest, LosesTheOriginalControllingTerminal) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.has_terminal, 0);
@@ -70,8 +68,7 @@ TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
     PingProbe();
 
@@ -83,8 +80,7 @@ TEST_F(TerminalTest, KeepsRunningAfterTheOriginalTerminalIsClosed) {
 TEST_F(TerminalTest, OpeningATerminalDoesNotMakeItTheControllingTerminal) {
     const auto report = RunProbeMode("terminal", {}, {slave_path_});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().has_terminal, 0);
 }
 

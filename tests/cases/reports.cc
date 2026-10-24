@@ -19,10 +19,10 @@ namespace detach_test {
 namespace {
 
 constexpr char kValidReport[] = "PID: 37\nstdout: output\nstderr: errors\n";
-constexpr char kFakeScript[] =
-    "#!/bin/sh\n"
-    "/bin/cat stdout.txt\n"
-    "/bin/cat stderr.txt >&2\n";
+constexpr char kFakeScript[]
+    = "#!/bin/sh\n"
+      "/bin/cat stdout.txt\n"
+      "/bin/cat stderr.txt >&2\n";
 
 class ReportsTest : public DetachTest {
 protected:
@@ -49,8 +49,7 @@ protected:
 
         const auto report = Run({}, options);
 
-        EXPECT_EQ(report.exit_code, 0)
-            << report.error;
+        EXPECT_EQ(report.exit_code, 0) << report.error;
         return report;
     }
 };
@@ -61,8 +60,8 @@ class ValidPidTest : public ReportsTest, public testing::WithParamInterface<pid_
 };
 
 TEST_P(ValidPidTest, AcceptsTheSupportedRange) {
-    const std::string output =
-        "PID: " + std::to_string(GetParam()) + "\nstdout: output\nstderr: errors\n";
+    const std::string output
+        = "PID: " + std::to_string(GetParam()) + "\nstdout: output\nstderr: errors\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();
@@ -92,8 +91,8 @@ class InvalidPidTest : public ReportsTest,
 };
 
 TEST_P(InvalidPidTest, RejectsThePidAndFollowingPaths) {
-    const std::string output =
-        "PID: " + GetParam().text + "\nstdout: output\nstderr: errors\n";
+    const std::string output
+        = "PID: " + GetParam().text + "\nstdout: output\nstderr: errors\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();
@@ -204,9 +203,9 @@ TEST_F(ReportsTest, DoesNotReuseThePidAcrossStreams) {
 }
 
 TEST_F(ReportsTest, UsesTheCompleteFallbackAfterPartialOutput) {
-    const std::string error =
-        std::string("report: broken pipe\nThe command may already be running.\n") +
-        kValidReport;
+    const std::string error
+        = std::string("report: broken pipe\nThe command may already be running.\n")
+          + kValidReport;
     ASSERT_NO_FATAL_FAILURE(WriteReport("PID: 37\nstdout: partial\n", error));
 
     const auto report = CaptureReport();
@@ -229,8 +228,8 @@ TEST_F(ReportsTest, InvalidPidDoesNotReplaceAnEarlierReport) {
 }
 
 TEST_F(ReportsTest, InvalidPidStopsFollowingPathFields) {
-    const std::string output =
-        std::string(kValidReport) + "PID: invalid\nstdout: wrong\nstderr: wrong\n";
+    const std::string output
+        = std::string(kValidReport) + "PID: invalid\nstdout: wrong\nstderr: wrong\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();
@@ -241,8 +240,8 @@ TEST_F(ReportsTest, InvalidPidStopsFollowingPathFields) {
 }
 
 TEST_F(ReportsTest, NewPidDiscardsEarlierPathsInTheSameStream) {
-    const std::string output =
-        std::string(kValidReport) + "PID: 38\nstderr: new-errors\n";
+    const std::string output
+        = std::string(kValidReport) + "PID: 38\nstderr: new-errors\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();
@@ -276,8 +275,8 @@ class DecodedPathTest : public ReportsTest,
 
 TEST_P(DecodedPathTest, ReturnsRealPathsAndKeepsTheCapturedText) {
     const auto& test_case = GetParam();
-    const std::string output = std::string("PID: 37\nstdout: ") + test_case.encoded +
-                               "\nstderr: " + test_case.encoded + "\n";
+    const std::string output = std::string("PID: 37\nstdout: ") + test_case.encoded
+                               + "\nstderr: " + test_case.encoded + "\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();
@@ -371,8 +370,8 @@ class InvalidPathTest : public ReportsTest,
 };
 
 TEST_P(InvalidPathTest, RejectsTheWholePath) {
-    const std::string output =
-        "PID: 37\nstdout: " + GetParam().text + "\nstderr: " + GetParam().text + "\n";
+    const std::string output
+        = "PID: 37\nstdout: " + GetParam().text + "\nstderr: " + GetParam().text + "\n";
     ASSERT_NO_FATAL_FAILURE(WriteReport(output));
 
     const auto report = CaptureReport();

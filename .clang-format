@@ -12,6 +12,9 @@ IndentWidth: 4
 # Limit lines to 88 characters.
 ColumnLimit: 88
 
+# Put wrapped binary operators at the start of the next line.
+BreakBeforeBinaryOperators: All
+
 # Align wrapped arguments with the first argument.
 AlignAfterOpenBracket: Align
 

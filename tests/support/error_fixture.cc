@@ -36,17 +36,14 @@ const char* RoleName(ProcessRole role) {
             return "command";
     }
 
-    ADD_FAILURE()
-        << "unknown process role: "
-        << static_cast<int>(role);
+    ADD_FAILURE() << "unknown process role: " << static_cast<int>(role);
     return "";
 }
 
 // Formats a rule once for the launch plan and the verification log.
 std::string FormatRule(const FaultRule& rule) {
     if (rule.operation == nullptr || rule.operation[0] == '\0') {
-        ADD_FAILURE()
-            << "missing fault operation";
+        ADD_FAILURE() << "missing fault operation";
         return {};
     }
 
@@ -93,8 +90,7 @@ void ErrorTest::TearDown() {
     if (fault_log_ready_) {
         applied.open(Path(kAppliedFaultLogName));
         EXPECT_TRUE(applied.is_open())
-            << "cannot open applied fault log: "
-            << Path(kAppliedFaultLogName);
+            << "cannot open applied fault log: " << Path(kAppliedFaultLogName);
     }
 
     DetachTest::TearDown();
@@ -106,8 +102,7 @@ void ErrorTest::TearDown() {
     for (const auto& path : temporary_logs) {
         const int status = unlink(path.c_str());
         if (status < 0 && errno != ENOENT) {
-            EXPECT_TRUE(CheckSysCall(status, "remove temporary log"))
-                << path;
+            EXPECT_TRUE(CheckSysCall(status, "remove temporary log")) << path;
         }
     }
 }
@@ -173,8 +168,7 @@ void ErrorTest::ExpectAppliedFaults(std::istream& log) const {
         actual.insert(rule);
     }
 
-    EXPECT_TRUE(log.eof() && !log.bad())
-        << "cannot read applied fault log";
+    EXPECT_TRUE(log.eof() && !log.bad()) << "cannot read applied fault log";
     EXPECT_EQ(actual, expected_faults_)
         << "applied faults do not match the launch plan";
 }
@@ -182,8 +176,7 @@ void ErrorTest::ExpectAppliedFaults(std::istream& log) const {
 // Checks cleanup against the paths recorded by the instrumented executable.
 void ErrorTest::ExpectTemporaryFilesRemoved() const {
     for (const auto& path : TemporaryLogPaths()) {
-        EXPECT_FALSE(Exists(path))
-            << path;
+        EXPECT_FALSE(Exists(path)) << path;
     }
 }
 

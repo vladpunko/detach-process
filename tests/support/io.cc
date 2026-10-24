@@ -26,11 +26,7 @@ constexpr std::size_t kReadBufferSize = 4096;
 
 // Reports a path operation failure using the saved system error.
 void ReportPathError(const char* message, const std::string& path, int error) {
-    ADD_FAILURE()
-        << message
-        << path
-        << ": "
-        << std::strerror(error);
+    ADD_FAILURE() << message << path << ": " << std::strerror(error);
 }
 
 // Collects bytes and returns zero on `EOF` or a saved `errno` on error.
@@ -96,10 +92,7 @@ testing::AssertionResult CheckSysCall(int status, const char* operation) {
     }
 
     const int error = errno;
-    return testing::AssertionFailure()
-        << operation
-        << ": "
-        << std::strerror(error);
+    return testing::AssertionFailure() << operation << ": " << std::strerror(error);
 }
 
 // Builds a `/dev/fd` path for inherited descriptor checks.
@@ -130,17 +123,13 @@ std::string Read(const std::string& path) {
 // Replaces file contents and checks for buffered errors after closing.
 void Write(const std::string& path, const std::string& contents) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    ASSERT_TRUE(output)
-        << "cannot open "
-        << path;
+    ASSERT_TRUE(output) << "cannot open " << path;
 
     const auto bytes_to_write = static_cast<std::streamsize>(contents.size());
     output.write(contents.data(), bytes_to_write);
 
     output.close();
-    ASSERT_TRUE(output)
-        << "cannot write "
-        << path;
+    ASSERT_TRUE(output) << "cannot write " << path;
 }
 
 // Collects pipe output until `EOF` or until a nonblocking read would wait.
@@ -148,9 +137,7 @@ std::string ReadPipeOutput(int fd) {
     std::string contents;
     const int read_error = ReadContents(fd, contents);
     if (read_error != 0 && read_error != EAGAIN && read_error != EWOULDBLOCK) {
-        ADD_FAILURE()
-            << "cannot read pipe output: "
-            << std::strerror(read_error);
+        ADD_FAILURE() << "cannot read pipe output: " << std::strerror(read_error);
     }
 
     return contents;
@@ -177,8 +164,7 @@ mode_t GetPermission(const std::string& path) {
     const int status = stat(path.c_str(), &stats);
 
     EXPECT_TRUE(CheckSysCall(status, "stat"))
-        << "cannot read permissions for: "
-        << path;
+        << "cannot read permissions for: " << path;
 
     return stats.st_mode & 0777;
 }

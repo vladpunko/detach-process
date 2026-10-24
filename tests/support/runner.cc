@@ -52,8 +52,7 @@ int OpenCaptureFile(const std::string& path) {
         fd = fcntl(original.get(), F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
     }
 
-    EXPECT_TRUE(CheckSysCall(fd, "open capture file"))
-        << path;
+    EXPECT_TRUE(CheckSysCall(fd, "open capture file")) << path;
     return fd;
 }
 
@@ -235,8 +234,7 @@ testing::AssertionResult WaitForLauncher(RunReport& report) {
     if (!stop_status) {
         return stop_status;
     }
-    return testing::AssertionFailure()
-        << "detach did not return before the deadline";
+    return testing::AssertionFailure() << "detach did not return before the deadline";
 }
 
 // Startup report parsing.
@@ -379,9 +377,8 @@ RunReport RunDetach(std::vector<std::string> arguments,
     }
 
     if (executable_path.empty()) {
-        ADD_FAILURE()
-            << "no detach executable configured: "
-            << "set executable_path or DETACH_TEST_EXECUTABLE";
+        ADD_FAILURE() << "no detach executable configured: "
+                      << "set executable_path or DETACH_TEST_EXECUTABLE";
         return {};
     }
 
@@ -434,8 +431,7 @@ RunReport RunDetach(std::vector<std::string> arguments,
     ParseReport(report.output, report);
     ParseReport(report.error, report);
 
-    EXPECT_NE(report.exit_code, kSetupErrorExitCode)
-        << report.error;
+    EXPECT_NE(report.exit_code, kSetupErrorExitCode) << report.error;
     return report;
 }
 

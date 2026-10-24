@@ -19,8 +19,7 @@ using SignalsTest = DetachTest;
 TEST_F(SignalsTest, KeepsTheCallersDefaultSigpipeDisposition) {
     const auto report = RunProbe();
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigpipe_ignored, 0);
@@ -35,8 +34,7 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredSigpipeDisposition) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigpipe_ignored, 1);
@@ -48,8 +46,7 @@ TEST_F(SignalsTest, KeepsTheCallersBlockedSigpipe) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigpipe_blocked, 1);
@@ -64,8 +61,7 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredAndBlockedSigpipe) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigpipe_ignored, 1);
@@ -79,8 +75,7 @@ TEST_F(SignalsTest, KeepsOtherBlockedSignals) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigusr1_blocked, 1);
@@ -92,8 +87,7 @@ TEST_F(SignalsTest, WorksWhenTheCallerIgnoresSigchld) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().sigchld_ignored, 1);
 }
 
@@ -102,8 +96,7 @@ TEST_F(SignalsTest, KeepsTheCallersIgnoredSighupDisposition) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().sighup_ignored, 1);
 }
 
@@ -117,8 +110,7 @@ TEST_F(SignalsTest, PreservesCombinedSignalState) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.sigpipe_ignored, 1);

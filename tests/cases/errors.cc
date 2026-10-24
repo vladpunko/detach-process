@@ -51,8 +51,7 @@ std::string OperationName(const testing::TestParamInfo<const char*>& info) {
 void ExpectError(const RunReport& report, const char* expected_diagnostic) {
     ASSERT_TRUE(expected_diagnostic != nullptr && expected_diagnostic[0] != '\0')
         << "expected diagnostic must not be empty";
-    ASSERT_EQ(report.exit_code, 1)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 1) << report.error;
     EXPECT_PRED_FORMAT2(testing::IsSubstring, expected_diagnostic, report.error);
 }
 
@@ -60,8 +59,7 @@ class CommandErrorTest : public ErrorTest {
 protected:
     // Checks the live command and its completed output after a recoverable fault.
     void ExpectCommandAvailable(const RunReport& report) {
-        ASSERT_GT(report.command_pid, 0)
-            << report.error;
+        ASSERT_GT(report.command_pid, 0) << report.error;
         const auto state = ReadProbe();
 
         EXPECT_EQ(state.pid, report.command_pid);
@@ -571,8 +569,10 @@ TEST_F(ErrorTest, InputAliasFailurePreservesInputAndRemovesTemporaryLogs) {
     const std::string input_path = Path("input");
     ASSERT_NO_FATAL_FAILURE(Write(input_path, "keep stdin\n"));
     const std::vector<std::string> options = {
-        "--stdin", input_path,
-        "--stdout", input_path,
+        "--stdin",
+        input_path,
+        "--stdout",
+        input_path,
     };
 
     const auto report = RunProbe(options, FaultOptions());
@@ -595,8 +595,10 @@ TEST_F(ErrorTest, FailureToReopenDevNullIsReported) {
 TEST_F(ErrorTest, FailureToShareOutputOffsetsIsReported) {
     const auto options = Inject({"dup2", ProcessRole::kLauncher, 1, EBADF});
     const std::vector<std::string> file_options = {
-        "--stdout", Path("combined"),
-        "--stderr", Path("combined"),
+        "--stdout",
+        Path("combined"),
+        "--stderr",
+        Path("combined"),
     };
 
     const auto report = RunProbe(file_options, options);
@@ -699,8 +701,7 @@ TEST_P(StartupRetryTest, RetriesWithoutChangingTheStartedCommand) {
 
     const auto report = RunProbeMode("streams", {}, {}, Inject(scenario.fault));
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 
@@ -719,8 +720,7 @@ TEST_F(CommandErrorTest, RetriesPartialPidTransfersAcrossInterruptions) {
 
     const auto report = RunProbeMode("streams", {}, {}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ASSERT_NO_FATAL_FAILURE(ExpectCommandAvailable(report));
 }
 
@@ -744,8 +744,7 @@ TEST_F(ErrorTest, RedirectingADescriptorToItselfKeepsItOpen) {
 
     const auto report = Run({}, options);
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
 }
 
 // Diagnostic errors.
@@ -858,8 +857,10 @@ TEST_F(ErrorTest, AliasedTemporaryStderrIsReadThroughTheOpenDescriptor) {
     auto options = FaultOptions();
     options.environment["DETACH_TEST_STDERR_ALIAS"] = error_path;
     const std::vector<std::string> arguments = {
-        "--stderr", error_path,
-        "--", Path("missing-command"),
+        "--stderr",
+        error_path,
+        "--",
+        Path("missing-command"),
     };
 
     const auto report = Run(arguments, options);
@@ -953,8 +954,7 @@ TEST_F(ErrorTest, KilledDuringPermissionWaitDoesNotReportSuccess) {
 
     const auto report = Run({"--", Path("missing-command")}, options);
 
-    EXPECT_EQ(report.exit_code, 1)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 1) << report.error;
     EXPECT_FALSE(report.error.empty());
     EXPECT_TRUE(report.output.empty());
 }
@@ -975,8 +975,7 @@ TEST_F(ErrorTest, UnreportedDeathAtExecHasTheDocumentedStartupStatus) {
 
     const auto report = Run({"--", Path("missing-command")}, options);
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
     EXPECT_GT(report.command_pid, 0);
     EXPECT_TRUE(report.error.empty());
 }
@@ -994,9 +993,8 @@ TEST_F(ErrorTest, ReturnedExecErrorStillReportsFailure) {
 TEST_F(ErrorTest, LostFailureReportStillReportsAnExecError) {
     const auto options = Inject({"send", ProcessRole::kCommand, 2, EPIPE});
     const std::vector<std::string> arguments = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--", Path("missing-command"),
+        "--stdout",     Path("output"), "--stderr",
+        Path("errors"), "--",           Path("missing-command"),
     };
 
     const auto report = Run(arguments, options);
@@ -1042,12 +1040,11 @@ TEST_F(ErrorTest, LostFailureReportStillReportsAStreamSetupError) {
 
 // An invalid permission must reach the launcher as a startup failure.
 TEST_F(ErrorTest, InvalidPermissionReportsAStartupFailure) {
-    const auto options =
-        Inject({"read", ProcessRole::kCommand, 1, FAULT_BAD_PERMISSION});
+    const auto options
+        = Inject({"read", ProcessRole::kCommand, 1, FAULT_BAD_PERMISSION});
     const std::vector<std::string> arguments = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--", Path("missing-command"),
+        "--stdout",     Path("output"), "--stderr",
+        Path("errors"), "--",           Path("missing-command"),
     };
 
     const auto report = Run(arguments, options);
@@ -1082,8 +1079,8 @@ TEST_F(ErrorTest, UnexpectedParserReturnIsRejected) {
 }
 
 TEST_F(ErrorTest, UnexpectedParserAdvanceIsNotASeparator) {
-    const auto options =
-        Inject({"getopt_long", ProcessRole::kLauncher, 1, FAULT_PARSER_ADVANCE});
+    const auto options
+        = Inject({"getopt_long", ProcessRole::kLauncher, 1, FAULT_PARSER_ADVANCE});
 
     const auto report = Run({"ordinary-argument"}, options);
 
@@ -1096,8 +1093,7 @@ TEST_F(ErrorTest, NullOptionArgumentIsTreatedAsEmpty) {
 
     const auto report = Run({}, options);
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
 }
 
 // Descriptor directory entries.
@@ -1129,8 +1125,7 @@ TEST_P(DescriptorEntryTest, IgnoresNamesThatAreNotValidDescriptors) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 
@@ -1148,8 +1143,7 @@ TEST_F(ErrorTest, IgnoresNonNumericEntriesWhenConversionLeavesErrnoUnchanged) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 

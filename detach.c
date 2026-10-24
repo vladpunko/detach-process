@@ -78,21 +78,21 @@ static const struct option long_options[] = {
 
 // Writes the shared CLI reference used by help and argument diagnostics.
 static bool print_usage(FILE* stream) {
-    const char message[] =
-        "Usage: detach [OPTIONS] -- program [ARGS...]\n"
-        "\n"
-        "Options:\n"
-        "  --help         show this help message and exit\n"
-        "  --stdin FILE   read the standard input from FILE\n"
-        "  --stdout FILE  write the standard output to FILE\n"
-        "  --stderr FILE  write the standard error to FILE\n"
-        "  --pid FILE     write the program's process ID to FILE\n"
-        "\n"
-        "Notes:\n"
-        "  Use %s to separate detach options from the program arguments.\n"
-        "  This is required when options are used.\n"
-        "  Reported paths escape backslashes as \\\\ and control bytes as "
-        "\\xHH.\n";
+    const char message[]
+        = "Usage: detach [OPTIONS] -- program [ARGS...]\n"
+          "\n"
+          "Options:\n"
+          "  --help         show this help message and exit\n"
+          "  --stdin FILE   read the standard input from FILE\n"
+          "  --stdout FILE  write the standard output to FILE\n"
+          "  --stderr FILE  write the standard error to FILE\n"
+          "  --pid FILE     write the program's process ID to FILE\n"
+          "\n"
+          "Notes:\n"
+          "  Use %s to separate detach options from the program arguments.\n"
+          "  This is required when options are used.\n"
+          "  Reported paths escape backslashes as \\\\ and control bytes as "
+          "\\xHH.\n";
     return fprintf(stream, message, OPTION_SEPARATOR) >= 0;
 }
 
@@ -188,8 +188,8 @@ static enum parse_result parse_arguments(int argc,
         option_index = optind;
     }
 
-    const bool separator_present =
-        optind > option_index && strcmp(argv[option_index], OPTION_SEPARATOR) == 0;
+    const bool separator_present
+        = optind > option_index && strcmp(argv[option_index], OPTION_SEPARATOR) == 0;
     if (options_present && !separator_present) {
         fprintf(stderr,
                 "Missing %s separator between detach options and the command.\n",
@@ -302,16 +302,16 @@ static bool validate_file_aliases(const struct launch_files* files) {
     const struct stat* errors = &files->errors.stats;
     const struct stat* pid = &files->pid.stats;
 
-    if (files->pid.path != NULL &&
-        (is_same_file(pid, input) || is_same_file(pid, output) ||
-         is_same_file(pid, errors))) {
+    if (files->pid.path != NULL
+        && (is_same_file(pid, input) || is_same_file(pid, output)
+            || is_same_file(pid, errors))) {
         fputs("pid file must differ from stdin, stdout, and stderr\n", stderr);
         return false;
     }
 
     // Reject regular input aliases while allowing shared devices like `/dev/null`.
-    if (S_ISREG(input->st_mode) &&
-        (is_same_file(input, output) || is_same_file(input, errors))) {
+    if (S_ISREG(input->st_mode)
+        && (is_same_file(input, output) || is_same_file(input, errors))) {
         fputs("stdin must differ from stdout and stderr for regular files\n", stderr);
         return false;
     }
@@ -346,13 +346,13 @@ static bool open_launch_files(struct launch_files* files) {
         return false;
     }
 
-    if (!open_log_file(&files->output, files->stdout_template, "stdout") ||
-        !open_log_file(&files->errors, files->stderr_template, "stderr")) {
+    if (!open_log_file(&files->output, files->stdout_template, "stdout")
+        || !open_log_file(&files->errors, files->stderr_template, "stderr")) {
         return false;
     }
 
-    if (!inspect_file(&files->output, "stdout") ||
-        !inspect_file(&files->errors, "stderr")) {
+    if (!inspect_file(&files->output, "stdout")
+        || !inspect_file(&files->errors, "stderr")) {
         return false;
     }
 
@@ -449,8 +449,8 @@ static int parse_descriptor_name(const char* name) {
     char* end;
     errno = 0;
     const intmax_t descriptor = strtoimax(name, &end, 10);
-    if (errno != 0 || end == name || *end != '\0' || descriptor <= STDERR_FILENO ||
-        descriptor > INT_MAX) {
+    if (errno != 0 || end == name || *end != '\0' || descriptor <= STDERR_FILENO
+        || descriptor > INT_MAX) {
         return -1;
     }
 
@@ -506,9 +506,9 @@ static bool close_inherited_descriptors(int startup_fd) {
 // Redirects all command streams, then closes unrelated inherited handles
 // without losing the channel needed to report startup failures.
 static bool prepare_command_streams(const struct launch_files* files, int startup_fd) {
-    if (!redirect_standard_descriptor(files->input.fd, STDIN_FILENO, "stdin") ||
-        !redirect_standard_descriptor(files->output.fd, STDOUT_FILENO, "stdout") ||
-        !redirect_standard_descriptor(files->errors.fd, STDERR_FILENO, "stderr")) {
+    if (!redirect_standard_descriptor(files->input.fd, STDIN_FILENO, "stdin")
+        || !redirect_standard_descriptor(files->output.fd, STDOUT_FILENO, "stdout")
+        || !redirect_standard_descriptor(files->errors.fd, STDERR_FILENO, "stderr")) {
         return false;
     }
 
@@ -519,8 +519,8 @@ static bool prepare_command_streams(const struct launch_files* files, int startu
 // cleanup, saving the original disposition for the command.
 static bool ignore_sigpipe(struct sigpipe_state* sigpipe) {
     sigpipe->ignored.sa_handler = SIG_IGN;
-    if (sigemptyset(&sigpipe->ignored.sa_mask) < 0 ||
-        sigaction(SIGPIPE, &sigpipe->ignored, &sigpipe->original) < 0) {
+    if (sigemptyset(&sigpipe->ignored.sa_mask) < 0
+        || sigaction(SIGPIPE, &sigpipe->ignored, &sigpipe->original) < 0) {
         perror("sigpipe");
         return false;
     }
@@ -669,14 +669,14 @@ static void print_error_log(int fd) {
 
 // Keeps a labeled path on one line in reports and startup diagnostics.
 static bool print_path_line(FILE* stream, const char* label, const char* path) {
-    return fprintf(stream, "%s: ", label) >= 0 && print_escaped_text(stream, path) &&
-           fputc('\n', stream) != EOF;
+    return fprintf(stream, "%s: ", label) >= 0 && print_escaped_text(stream, path)
+           && fputc('\n', stream) != EOF;
 }
 
 // Uses the same path representation and field order for every launch report.
 static bool print_log_paths(FILE* stream, const struct launch_files* files) {
-    return print_path_line(stream, "stdout", files->output.path) &&
-           print_path_line(stream, "stderr", files->errors.path);
+    return print_path_line(stream, "stdout", files->output.path)
+           && print_path_line(stream, "stderr", files->errors.path);
 }
 
 // Reports a failed command setup and exposes its diagnostics, either by
@@ -685,8 +685,8 @@ static void print_startup_error(const struct launch_files* files) {
     fputs("failed to start the command\n", stderr);
     if (files->errors.is_temporary) {
         print_error_log(files->errors.fd);
-    } else if (files->output.is_temporary &&
-               is_same_file(&files->output.stats, &files->errors.stats)) {
+    } else if (files->output.is_temporary
+               && is_same_file(&files->output.stats, &files->errors.stats)) {
         // Selected `stderr` may alias an unlinked temporary `stdout`.
         print_error_log(files->output.fd);
     } else {
@@ -705,8 +705,8 @@ static void report_output_failure(pid_t pid, const struct launch_files* files) {
 // Flushes the launch report without removing logs if writing fails.
 static bool print_launch_report(pid_t pid, const struct launch_files* files) {
     // `fclose` checks the final buffered write as well as closing the stream.
-    if (printf("PID: %jd\n", (intmax_t)pid) < 0 || !print_log_paths(stdout, files) ||
-        fclose(stdout) == EOF) {
+    if (printf("PID: %jd\n", (intmax_t)pid) < 0 || !print_log_paths(stdout, files)
+        || fclose(stdout) == EOF) {
         report_output_failure(pid, files);
         return false;
     }
@@ -794,8 +794,8 @@ static int run_detached_command(char* const command[],
         goto failed;
     }
     // `EOF` or an invalid byte means the launcher did not permit execution.
-    if (permission_length != sizeof(start_permission) ||
-        start_permission != START_COMMAND) {
+    if (permission_length != sizeof(start_permission)
+        || start_permission != START_COMMAND) {
         goto failed;
     }
 
@@ -932,8 +932,8 @@ int main(int argc, char* argv[]) {
         .stdout_template = STDOUT_PATH_TEMPLATE,
         .stderr_template = STDERR_PATH_TEMPLATE,
     };
-    if (!open_launch_files(&files) || !validate_file_aliases(&files) ||
-        !prepare_output_files(&files)) {
+    if (!open_launch_files(&files) || !validate_file_aliases(&files)
+        || !prepare_output_files(&files)) {
         return fail_startup(&files);
     }
 

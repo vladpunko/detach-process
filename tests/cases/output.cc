@@ -35,15 +35,13 @@ protected:
     void ExpectStartupReport(const RunReport& report,
                              const std::string& stdout_text,
                              const std::string& stderr_text) {
-        ASSERT_EQ(report.exit_code, 0)
-            << report.error;
+        ASSERT_EQ(report.exit_code, 0) << report.error;
         const auto state = ReadProbe();
 
         const auto expected = ExpectedStartupReport(state, stdout_text, stderr_text);
 
         EXPECT_EQ(report.output, expected);
-        EXPECT_TRUE(report.error.empty())
-            << report.error;
+        EXPECT_TRUE(report.error.empty()) << report.error;
         EXPECT_EQ(report.command_pid, state.pid);
         EXPECT_EQ(Read(Path("job.pid")), std::to_string(state.pid) + "\n");
     }
@@ -58,8 +56,7 @@ TEST_F(OutputTest, HelpSucceedsWithoutStartingACommand) {
 
     const auto report = Run({"--help"});
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
     EXPECT_TRUE(report.output.starts_with("Usage: detach"));
     EXPECT_TRUE(report.error.empty());
     EXPECT_EQ(report.command_pid, -1);
@@ -90,7 +87,7 @@ class LaunchReportTest : public OutputTest,
 TEST_P(LaunchReportTest, PrintsCommandPidAndLogPathsInOrder) {
     const auto& test_case = GetParam();
     const std::vector<std::string> options = {
-        "--pid", "job.pid",
+        "--pid",    "job.pid",
         "--stdout", test_case.stdout_path,
         "--stderr", test_case.stderr_path,
     };
@@ -150,9 +147,7 @@ TEST_P(EscapedPathTest, KeepsPathsOnSeparateReportLines) {
     const std::string printed_stdout = std::string("output-") + test_case.reported_path;
     const std::string printed_stderr = std::string("errors-") + test_case.reported_path;
     const std::vector<std::string> options = {
-        "--pid", "job.pid",
-        "--stdout", stdout_path,
-        "--stderr", stderr_path,
+        "--pid", "job.pid", "--stdout", stdout_path, "--stderr", stderr_path,
     };
 
     const auto report = RunProbeMode("streams", options);
@@ -240,16 +235,14 @@ TEST_F(OutputTest, ExecFailureEscapesTheSelectedErrorPath) {
 TEST_F(OutputTest, ReportsStartupSuccessEvenWhenTheCommandExitsWithAnError) {
     const auto report = Run({"--", "/bin/sh", "-c", "exit 42"});
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
     EXPECT_GT(report.command_pid, 0);
 }
 
 TEST_F(OutputTest, ReportsStartupSuccessEvenWhenTheCommandKillsItself) {
     const auto report = Run({"--", "/bin/sh", "-c", "kill -TERM $$"});
 
-    EXPECT_EQ(report.exit_code, 0)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 0) << report.error;
     EXPECT_GT(report.command_pid, 0);
 }
 
@@ -263,8 +256,8 @@ TEST_F(OutputTest, BrokenReportPipeDoesNotStopTheStartedCommand) {
     ASSERT_EQ(report.exit_code, 1);
     const auto state = ReadProbe();
     std::string expected_report = "the command may already be running\n";
-    expected_report +=
-        ExpectedStartupReport(state, report.stdout_path, report.stderr_path);
+    expected_report
+        += ExpectedStartupReport(state, report.stdout_path, report.stderr_path);
 
     EXPECT_TRUE(report.output.empty());
     ASSERT_FALSE(report.stdout_path.empty());

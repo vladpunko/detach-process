@@ -111,8 +111,8 @@ static void record_temporary(const char* path) {
 // Reads one rule and rejects missing fields, invalid numbers and overflow.
 static void parse_rule(const char* text, struct fault_rule* rule) {
     int number_offset = 0;
-    const int fields =
-        sscanf(text, "%15[^:]:%31[^:]:%n", rule->role, rule->operation, &number_offset);
+    const int fields = sscanf(text, "%15[^:]:%31[^:]:%n", rule->role, rule->operation,
+                              &number_offset);
     if (fields != 2 || number_offset == 0) {
         exit(SETUP_ERROR_EXIT_CODE);
     }
@@ -122,16 +122,16 @@ static void parse_rule(const char* text, struct fault_rule* rule) {
     char* end;
     errno = 0;
     const intmax_t call_number = strtoimax(number_text, &end, 10);
-    if (errno != 0 || end == number_text || *end != ':' || call_number <= 0 ||
-        call_number > UINT_MAX) {
+    if (errno != 0 || end == number_text || *end != ':' || call_number <= 0
+        || call_number > UINT_MAX) {
         exit(SETUP_ERROR_EXIT_CODE);
     }
 
     const char* result_text = end + 1;
     errno = 0;
     const intmax_t result = strtoimax(result_text, &end, 10);
-    if (errno != 0 || end == result_text || *end != '\0' || result < INT_MIN ||
-        result > INT_MAX) {
+    if (errno != 0 || end == result_text || *end != '\0' || result < INT_MIN
+        || result > INT_MAX) {
         exit(SETUP_ERROR_EXIT_CODE);
     }
 
@@ -174,8 +174,8 @@ static const struct fault_rule* apply_fault(const char* operation) {
 
     for (size_t index = 0; index < rule_count; index += 1) {
         struct fault_rule* rule = &rules[index];
-        if (strcmp(rule->role, roles[current_role]) != 0 ||
-            strcmp(rule->operation, operation) != 0) {
+        if (strcmp(rule->role, roles[current_role]) != 0
+            || strcmp(rule->operation, operation) != 0) {
             continue;
         }
 

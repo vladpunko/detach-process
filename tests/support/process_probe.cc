@@ -42,8 +42,8 @@ testing::AssertionResult WaitReadable(int fd,
                                       std::chrono::steady_clock::time_point deadline) {
     while (std::chrono::steady_clock::now() < deadline) {
         const auto remaining = deadline - std::chrono::steady_clock::now();
-        const auto timeout =
-            std::chrono::duration_cast<std::chrono::milliseconds>(remaining);
+        const auto timeout
+            = std::chrono::duration_cast<std::chrono::milliseconds>(remaining);
 
         // Wait at least one millisecond to avoid spinning near the deadline.
         const int wait_ms = std::max(1, static_cast<int>(timeout.count()));
@@ -57,8 +57,7 @@ testing::AssertionResult WaitReadable(int fd,
         }
 
         if (event.revents & POLLNVAL) {
-            return testing::AssertionFailure()
-                << "invalid probe descriptor";
+            return testing::AssertionFailure() << "invalid probe descriptor";
         }
 
         // Let the caller read buffered data or observe `EOF` after a hangup.
@@ -66,13 +65,11 @@ testing::AssertionResult WaitReadable(int fd,
             return testing::AssertionSuccess();
         }
         if (event.revents & POLLERR) {
-            return testing::AssertionFailure()
-                << "cannot communicate with the probe";
+            return testing::AssertionFailure() << "cannot communicate with the probe";
         }
     }
 
-    return testing::AssertionFailure()
-        << "timed out waiting for the probe";
+    return testing::AssertionFailure() << "timed out waiting for the probe";
 }
 
 // Reads one complete record using a single deadline across partial transfers.
@@ -100,7 +97,7 @@ testing::AssertionResult ReadExactly(int fd,
         }
         if (bytes_read == 0) {
             return testing::AssertionFailure()
-                << "probe connection closed before the full record was received";
+                   << "probe connection closed before the full record was received";
         }
 
         // Continue after the received bytes because socket reads can be partial.
@@ -193,9 +190,7 @@ void ProcessProbe::Ping() {
         if (bytes_sent < 0 && error == EINTR) {
             continue;
         }
-        ASSERT_EQ(bytes_sent, 1)
-            << "cannot send probe ping: "
-            << std::strerror(error);
+        ASSERT_EQ(bytes_sent, 1) << "cannot send probe ping: " << std::strerror(error);
         break;
     }
 

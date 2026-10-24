@@ -34,9 +34,9 @@ protected:
     std::string SocketPath() const;
 
     // Builds a probe command with its mode, control socket and arguments.
-    std::vector<std::string> ProbeCommand(
-        const std::string& mode = "state",
-        const std::vector<std::string>& arguments = {}) const;
+    std::vector<std::string> ProbeCommand(const std::string& mode = "state",
+                                          const std::vector<std::string>& arguments
+                                          = {}) const;
 
     // Runs `detach` and remembers default log file paths for cleanup.
     RunReport Run(const std::vector<std::string>& arguments,

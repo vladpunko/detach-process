@@ -28,8 +28,7 @@ protected:
 
         const auto report = RunProbeMode("arguments", {}, arguments, options);
 
-        ASSERT_EQ(report.exit_code, 0)
-            << report.error;
+        ASSERT_EQ(report.exit_code, 0) << report.error;
         ReadProbe();
 
         EXPECT_EQ(Read(report.stdout_path), expected_output);
@@ -38,8 +37,7 @@ protected:
 
 // Checks the exit status and diagnostic shared by rejected command arguments.
 void ExpectError(const RunReport& report, const std::string& message) {
-    EXPECT_EQ(report.exit_code, 1)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 1) << report.error;
     EXPECT_PRED_FORMAT2(testing::IsSubstring, message, report.error);
 }
 
@@ -96,8 +94,7 @@ TEST_F(ArgumentsTest, OptionsWithoutACommandDoNotCreateFiles) {
 TEST_F(ArgumentsTest, CommandDoesNotRequireASeparatorWhenNoOptionsAreUsed) {
     const auto report = Run(ProbeCommand());
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().pid, report.command_pid);
 }
 
@@ -156,8 +153,7 @@ TEST_F(ArgumentsTest, ManyArgumentsPreserveTheirOrder) {
 TEST_F(ArgumentsTest, ParsingStopsAtTheCommandWithoutASeparator) {
     const auto report = Run(ProbeCommand("arguments", {"--help", "--pid", "x"}));
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(Read(report.stdout_path), "6:--help\n5:--pid\n1:x\n");
@@ -177,8 +173,7 @@ class RepeatedOutputTest : public DetachTest,
 TEST_P(RepeatedOutputTest, UsesTheLastValue) {
     const auto report = RunProbeMode("streams", GetParam().options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, "selected");
@@ -207,14 +202,14 @@ TEST_F(ArgumentsTest, RepeatedInputUsesTheLastPathBeforeOpeningFiles) {
     const std::string contents = "selected input\n";
     Write(Path("selected"), contents);
     const std::vector<std::string> options = {
-        "--stdin", Path("missing"),
+        "--stdin",
+        Path("missing"),
         "--stdin=" + Path("selected"),
     };
 
     const auto report = RunProbeMode("stdio", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(Read(report.stdout_path), contents);
@@ -224,8 +219,7 @@ TEST_F(ArgumentsTest, RepeatedInputUsesTheLastPathBeforeOpeningFiles) {
 TEST_F(ArgumentsTest, SeparatorCanAlsoBeAnOptionValue) {
     const auto report = RunProbeMode("streams", {"--stdout", "--"});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, "--");
@@ -235,8 +229,7 @@ TEST_F(ArgumentsTest, SeparatorCanAlsoBeAnOptionValue) {
 TEST_F(ArgumentsTest, OptionNameCanAlsoBeAnOptionValue) {
     const auto report = RunProbeMode("streams", {"--stdout", "--help"});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, "--help");
@@ -246,8 +239,7 @@ TEST_F(ArgumentsTest, OptionNameCanAlsoBeAnOptionValue) {
 TEST_F(ArgumentsTest, AttachedOptionValueIsAccepted) {
     const auto report = RunProbeMode("streams", {"--stdout=" + Path("output")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, Path("output"));
@@ -259,8 +251,7 @@ TEST_F(ArgumentsTest, AttachedValuePreservesSpacesAndEqualsSigns) {
 
     const auto report = RunProbeMode("streams", {"--stdout=" + output_path});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, output_path);
@@ -327,8 +318,7 @@ TEST_P(ValueOptionTest, HelpDoesNotModifyTheOptionFile) {
 
     const auto report = RunProbe({GetParam(), path, "--help"});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "Usage:", report.output);
     EXPECT_EQ(report.command_pid, -1);
     EXPECT_TRUE(report.error.empty());
@@ -348,8 +338,8 @@ INSTANTIATE_TEST_SUITE_P(FileOptions,
 // Unknown options.
 
 TEST_F(ArgumentsTest, UnknownOptionCannotForgeALaunchReport) {
-    const std::string argument =
-        "--unknown\nPID: 2147483647\nstdout: forged-output\nstderr: forged-errors";
+    const std::string argument
+        = "--unknown\nPID: 2147483647\nstdout: forged-output\nstderr: forged-errors";
 
     const auto report = Run({argument});
 

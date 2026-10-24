@@ -123,15 +123,13 @@ protected:
                                     "create relative symbolic link");
         }
 
-        return testing::AssertionFailure()
-            << "unknown alias kind";
+        return testing::AssertionFailure() << "unknown alias kind";
     }
 };
 
 // Checks that alias validation rejects the launch before starting a command.
 void ExpectAliasError(const RunReport& report, const std::string& message) {
-    EXPECT_EQ(report.exit_code, 1)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 1) << report.error;
     EXPECT_EQ(report.command_pid, -1);
     EXPECT_TRUE(report.output.empty());
     EXPECT_PRED_FORMAT2(testing::IsSubstring, message, report.error);
@@ -168,8 +166,10 @@ TEST_P(SharedOutputTest, BothStreamsShareAnOffsetWhenTheyReferToTheSameFile) {
     ASSERT_TRUE(CreateAlias(test_case.kind, "combined", alias_path));
 
     std::vector<std::string> options = {
-        "--stdout", Path("combined"),
-        "--stderr", alias_path,
+        "--stdout",
+        Path("combined"),
+        "--stderr",
+        alias_path,
     };
     if (test_case.write_pid) {
         options.insert(options.end(), {"--pid", Path("pid")});
@@ -177,8 +177,7 @@ TEST_P(SharedOutputTest, BothStreamsShareAnOffsetWhenTheyReferToTheSameFile) {
 
     const auto report = RunProbeMode("streams", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(Read(Path("combined")), kCombinedContents);
@@ -192,8 +191,8 @@ TEST_P(SharedOutputTest, BothStreamsShareAnOffsetWhenTheyReferToTheSameFile) {
 
 // Names the alias mechanism and optional PID file in failure output.
 std::string SharedOutputName(const testing::TestParamInfo<SharedOutputCase>& info) {
-    return AliasName(info.param.kind) +
-           (info.param.write_pid ? "_WithPid" : "_WithoutPid");
+    return AliasName(info.param.kind)
+           + (info.param.write_pid ? "_WithPid" : "_WithoutPid");
 }
 
 INSTANTIATE_TEST_SUITE_P(OutputAliases,
@@ -231,10 +230,8 @@ TEST_P(PidAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
     ASSERT_TRUE(CreateAlias(test_case.kind, test_case.target, alias_path));
 
     const std::vector<std::string> options = {
-        "--stdin", Path("input"),
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", alias_path,
+        "--stdin",  Path("input"),  "--stdout", Path("output"),
+        "--stderr", Path("errors"), "--pid",    alias_path,
     };
 
     const auto report = RunProbe(options);
@@ -289,9 +286,7 @@ TEST_P(InputAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
     const auto output = test_case.option == "--stdout" ? alias_path : Path("output");
     const auto errors = test_case.option == "--stderr" ? alias_path : Path("errors");
     std::vector<std::string> options = {
-        "--stdin", Path("input"),
-        "--stdout", output,
-        "--stderr", errors,
+        "--stdin", Path("input"), "--stdout", output, "--stderr", errors,
     };
     if (test_case.write_pid) {
         options.insert(options.end(), {"--pid", Path("pid")});
@@ -307,8 +302,8 @@ TEST_P(InputAliasTest, RejectsAliasesBeforeChangingAnyFileContents) {
 std::string InputAliasName(
     const testing::TestParamInfo<InputAliasTest::ParamType>& info) {
     const InputAliasCase& test_case = info.param;
-    return test_case.option.substr(2) + "_" + AliasName(test_case.kind) +
-           (test_case.write_pid ? "_WithPid" : "_WithoutPid");
+    return test_case.option.substr(2) + "_" + AliasName(test_case.kind)
+           + (test_case.write_pid ? "_WithPid" : "_WithoutPid");
 }
 
 INSTANTIATE_TEST_SUITE_P(InputAliases,
@@ -331,14 +326,15 @@ TEST_F(AliasesTest, InheritedSharedOutputsAreRewoundBeforeWriting) {
     ASSERT_GT(lseek(inherited.get(), 0, SEEK_END), 0);
     const std::string path = DescriptorPath(inherited.get());
     const std::vector<std::string> options = {
-        "--stdout", path,
-        "--stderr", path,
+        "--stdout",
+        path,
+        "--stderr",
+        path,
     };
 
     const auto report = RunProbeMode("streams", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(Read(Path("combined")), kCombinedContents);
@@ -351,10 +347,8 @@ TEST_F(AliasesTest, InputDescriptorCannotAliasAnOutputFile) {
     ASSERT_TRUE(CheckSysCall(inherited.get(), "open inherited input"));
     const std::string path = DescriptorPath(inherited.get());
     const std::vector<std::string> options = {
-        "--stdin", path,
-        "--stdout", Path("input"),
-        "--stderr", Path("errors"),
-        "--pid", Path("pid"),
+        "--stdin",  path,           "--stdout", Path("input"),
+        "--stderr", Path("errors"), "--pid",    Path("pid"),
     };
 
     const auto report = RunProbe(options);

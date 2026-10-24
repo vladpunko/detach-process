@@ -41,8 +41,7 @@ void DetachTest::SetUpDirectory() {
     const char* created_path = mkdtemp(directory_template);
     const int error = errno;
     ASSERT_NE(created_path, nullptr)
-        << "cannot create test directory: "
-        << std::strerror(error);
+        << "cannot create test directory: " << std::strerror(error);
     directory_ = created_path;
 }
 
@@ -53,8 +52,7 @@ void DetachTest::TearDown() {
     // Default logs are created outside the test directory.
     for (const auto& path : default_logs_) {
         const int status = unlink(path.c_str());
-        EXPECT_TRUE(CheckSysCall(status, "remove default log"))
-            << path;
+        EXPECT_TRUE(CheckSysCall(status, "remove default log")) << path;
     }
 
     if (directory_.empty()) {
@@ -63,11 +61,8 @@ void DetachTest::TearDown() {
 
     std::error_code error;
     std::filesystem::remove_all(directory_, error);
-    EXPECT_FALSE(error)
-        << "cannot remove test directory: "
-        << directory_
-        << ": "
-        << error.message();
+    EXPECT_FALSE(error) << "cannot remove test directory: " << directory_ << ": "
+                        << error.message();
 }
 
 // Keeps test files inside the directory removed during cleanup.

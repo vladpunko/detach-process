@@ -27,8 +27,7 @@ using ProcessTest = DetachTest;
 TEST_F(ProcessTest, CommandRunsInANewSessionWithoutBeingItsLeader) {
     const auto report = RunProbe();
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.pid, report.command_pid);
@@ -43,8 +42,7 @@ TEST_F(ProcessTest, CommandRunsInANewSessionWithoutBeingItsLeader) {
 TEST_F(ProcessTest, LauncherReturnsWhileTheCommandIsStillRunning) {
     const auto report = RunProbe();
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     // The probe stays alive until the fixture closes its control socket.
@@ -55,11 +53,10 @@ TEST_F(ProcessTest, ImmediateCommandExitIsStillASuccessfulLaunch) {
     for (const int exit_code : {0, 37}) {
         SCOPED_TRACE(exit_code);
 
-        const auto report =
-            Run({"--", "/bin/sh", "-c", "exit " + std::to_string(exit_code)});
+        const auto report
+            = Run({"--", "/bin/sh", "-c", "exit " + std::to_string(exit_code)});
 
-        EXPECT_EQ(report.exit_code, 0)
-            << report.error;
+        EXPECT_EQ(report.exit_code, 0) << report.error;
         EXPECT_GT(report.command_pid, 0);
         EXPECT_TRUE(report.error.empty());
     }
@@ -81,17 +78,16 @@ TEST_F(ProcessTest, LooksUpTheCommandInPath) {
 
     const auto report = Run(arguments, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().pid, report.command_pid);
 }
 
 TEST_F(ProcessTest, SkipsUnusablePathCandidatesBeforeStartingTheCommand) {
-    ASSERT_TRUE(CheckSysCall(mkdir(Path("denied").c_str(), 0700),
-                            "create PATH directory"));
+    ASSERT_TRUE(
+        CheckSysCall(mkdir(Path("denied").c_str(), 0700), "create PATH directory"));
     ASSERT_NO_FATAL_FAILURE(Write(Path("denied/probe-command"), "not executable\n"));
     ASSERT_TRUE(CheckSysCall(chmod(Path("denied/probe-command").c_str(), 0600),
-                            "remove execute permission"));
+                             "remove execute permission"));
 
     auto arguments = ProbeCommand();
     const std::string link_path = Path("probe-command");
@@ -100,13 +96,12 @@ TEST_F(ProcessTest, SkipsUnusablePathCandidatesBeforeStartingTheCommand) {
     arguments.front() = "probe-command";
     arguments.insert(arguments.begin(), "--");
 
-    const std::string search_path =
-        Path("denied") + ":" + Path("missing") + ":" + Path(".");
+    const std::string search_path
+        = Path("denied") + ":" + Path("missing") + ":" + Path(".");
     const LaunchOptions options{.environment = {{"PATH", search_path}}};
     const auto report = Run(arguments, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().pid, report.command_pid);
 }
 
@@ -129,8 +124,7 @@ TEST_F(ProcessTest, ExecutableScriptRunsItsInterpreter) {
 
     const auto report = Run(arguments);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().pid, report.command_pid);
     PingProbe();
 }
@@ -155,8 +149,7 @@ TEST_F(ProcessTest, PreservesEnvironmentVariables) {
 
     const auto report = RunProbeMode("environment", {}, {"DETACH_TEST_VALUE"}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(Read(report.stdout_path), options.environment.at("DETACH_TEST_VALUE"));
@@ -167,8 +160,7 @@ TEST_F(ProcessTest, PreservesEmptyEnvironmentVariables) {
 
     const auto report = RunProbeMode("environment", {}, {"DETACH_TEST_VALUE"}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_TRUE(Read(report.stdout_path).empty());
@@ -178,19 +170,16 @@ TEST_F(ProcessTest, PreservesEmptyEnvironmentVariables) {
 TEST_F(ProcessTest, PreservesTheWorkingDirectory) {
     const auto report = RunProbeMode("cwd");
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     // Directory identity handles the `/tmp` symlink on macOS.
     const std::string directory_path = Read(report.stdout_path);
     std::error_code error;
-    const bool is_same_directory = std::filesystem::equivalent(
-        directory_path, Path("."), error);
+    const bool is_same_directory
+        = std::filesystem::equivalent(directory_path, Path("."), error);
 
-    EXPECT_FALSE(error)
-        << "cannot compare working directories: "
-        << error.message();
+    EXPECT_FALSE(error) << "cannot compare working directories: " << error.message();
     EXPECT_TRUE(is_same_directory);
 }
 
@@ -199,8 +188,7 @@ TEST_F(ProcessTest, PreservesTheFileCreationMask) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().creation_mask, 0027);
 }
 
@@ -209,8 +197,7 @@ TEST_F(ProcessTest, PreservesTheFileCreationMask) {
 TEST_F(ProcessTest, ClosesInternalDescriptorsBeforeExec) {
     const auto report = RunProbe({"--pid", Path("pid")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().extra_descriptors, 0);
 }
 
@@ -220,8 +207,7 @@ TEST_F(ProcessTest, ClosesInheritedDescriptorsWithoutClosingTheCallersCopies) {
 
     const auto report = RunProbe();
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().extra_descriptors, 0);
     EXPECT_GE(fcntl(inherited.get(), F_GETFD), 0);
 }
@@ -240,8 +226,7 @@ TEST_F(ProcessTest, ClosesDescriptorsAboveTheCurrentSoftLimit) {
 
     const auto report = RunProbeMode("descriptor", {}, {descriptor_number}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.descriptor_open, 0);
@@ -253,8 +238,10 @@ TEST_F(ProcessTest, DescriptorExhaustionIsReportedAsAStartupFailure) {
     // One free descriptor cannot hold both ends of the startup socket.
     const LaunchOptions options{.descriptor_limit = 7};
     const std::vector<std::string> file_options = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
+        "--stdout",
+        Path("output"),
+        "--stderr",
+        Path("errors"),
     };
 
     const auto report = RunProbe(file_options, options);
@@ -274,15 +261,12 @@ class ClosedStandardDescriptorsTest : public DetachTest,
 TEST_P(ClosedStandardDescriptorsTest, SuppliesValidRedirectedStreams) {
     const LaunchOptions options{.closed_standard_descriptors = GetParam()};
     const std::vector<std::string> file_options = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", Path("pid"),
+        "--stdout", Path("output"), "--stderr", Path("errors"), "--pid", Path("pid"),
     };
 
     const auto report = RunProbeMode("stdio", file_options, {}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.stdin_is_null, 1);

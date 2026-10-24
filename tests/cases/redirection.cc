@@ -27,8 +27,7 @@ using RedirectionTest = DetachTest;
 
 // Checks file-open errors before a detached command can start.
 void ExpectOpenError(const RunReport& report, const std::string& label) {
-    EXPECT_EQ(report.exit_code, 1)
-        << report.error;
+    EXPECT_EQ(report.exit_code, 1) << report.error;
     EXPECT_EQ(report.command_pid, -1);
     EXPECT_TRUE(report.output.empty());
     EXPECT_TRUE(report.stdout_path.empty());
@@ -43,8 +42,7 @@ TEST_F(RedirectionTest, DefaultLogsAreDistinctPrivateTemporaryFiles) {
 
     const auto report = RunProbeMode("streams", {}, {}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_TRUE(report.stdout_path.starts_with("/tmp/stdout."));
@@ -59,8 +57,7 @@ TEST_F(RedirectionTest, DefaultLogsAreDistinctPrivateTemporaryFiles) {
 TEST_F(RedirectionTest, DefaultInputIsDevNull) {
     const auto report = RunProbeMode("stdio");
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().stdin_is_null, 1);
 
     EXPECT_TRUE(Read(report.stdout_path).empty());
@@ -74,15 +71,13 @@ TEST_F(RedirectionTest, RedirectsAllThreeStreams) {
     const std::string contents(input, sizeof(input) - 1);
     Write(Path("input"), contents);
     const std::vector<std::string> options = {
-        "--stdin", Path("input"),
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
+        "--stdin",      Path("input"), "--stdout",
+        Path("output"), "--stderr",    Path("errors"),
     };
 
     const auto report = RunProbeMode("stdio", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().stdin_is_null, 0);
 
     EXPECT_EQ(Read(Path("input")), contents);
@@ -101,8 +96,7 @@ TEST_F(RedirectionTest, CopiesLargeInputWithoutLosingBytes) {
 
     const auto report = RunProbeMode("stdio", {"--stdin", Path("input")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(Read(report.stdout_path), contents);
@@ -113,8 +107,7 @@ TEST_F(RedirectionTest, EmptyInputFileProducesNoOutput) {
 
     const auto report = RunProbeMode("stdio", {"--stdin", Path("input")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().stdin_is_null, 0);
 
     EXPECT_TRUE(Read(report.stdout_path).empty());
@@ -124,16 +117,13 @@ TEST_F(RedirectionTest, EmptyInputFileProducesNoOutput) {
 TEST_F(RedirectionTest, RelativePathsAndSpacesInPathsWork) {
     Write(Path("input file"), "contents\n");
     const std::vector<std::string> options = {
-        "--stdin", "input file",
-        "--stdout", "output file",
-        "--stderr", "error file",
-        "--pid", "pid file",
+        "--stdin",  "input file", "--stdout", "output file",
+        "--stderr", "error file", "--pid",    "pid file",
     };
 
     const auto report = RunProbeMode("stdio", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(Read(Path("output file")), "contents\n");
@@ -147,8 +137,7 @@ TEST_F(RedirectionTest, PidFileIsCompleteBeforeTheCommandStarts) {
 
     const auto report = RunProbeMode("pid-file", {"--pid", Path("pid")}, {Path("pid")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(state.pid_file, state.pid);
@@ -168,8 +157,7 @@ TEST_F(RedirectionTest, ExistingOutputsAreTruncatedWithoutChangingTheirPermissio
     const auto report = RunProbeMode(
         "streams", {"--stdout", Path("output"), "--stderr", Path("errors")});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(Read(Path("output")), kStdoutContents);
@@ -181,15 +169,12 @@ TEST_F(RedirectionTest, ExistingOutputsAreTruncatedWithoutChangingTheirPermissio
 TEST_F(RedirectionTest, NewlyCreatedOutputAndPidFilesArePrivate) {
     const LaunchOptions options{.file_creation_mask = 0};
     const std::vector<std::string> arguments = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", Path("pid"),
+        "--stdout", Path("output"), "--stderr", Path("errors"), "--pid", Path("pid"),
     };
 
     const auto report = RunProbe(arguments, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(GetPermission(Path("output")), 0600);
@@ -210,20 +195,16 @@ class CreationMaskTest : public DetachTest,
 TEST_P(CreationMaskTest, SelectedFilesRespectTheMask) {
     const LaunchOptions options{.file_creation_mask = GetParam().mask};
     const std::vector<std::string> arguments = {
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", Path("pid"),
+        "--stdout", Path("output"), "--stderr", Path("errors"), "--pid", Path("pid"),
     };
 
     const auto report = RunProbe(arguments, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     for (const char* name : {"output", "errors", "pid"}) {
-        EXPECT_EQ(GetPermission(Path(name)), GetParam().permissions)
-            << name;
+        EXPECT_EQ(GetPermission(Path(name)), GetParam().permissions) << name;
     }
 }
 
@@ -232,8 +213,7 @@ TEST_P(CreationMaskTest, TemporaryLogsRespectTheMask) {
 
     const auto report = RunProbe({}, options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(GetPermission(report.stdout_path), GetParam().permissions);
@@ -272,14 +252,15 @@ INSTANTIATE_TEST_SUITE_P(CreationMasks,
 
 TEST_F(RedirectionTest, DevNullCanReceiveBothOutputStreams) {
     const std::vector<std::string> options = {
-        "--stdout", "/dev/null",
-        "--stderr", "/dev/null",
+        "--stdout",
+        "/dev/null",
+        "--stderr",
+        "/dev/null",
     };
 
     const auto report = RunProbeMode("streams", options);
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(report.stdout_path, "/dev/null");
@@ -292,8 +273,7 @@ TEST_F(RedirectionTest, PidCanBeWrittenToDevNullWithSeparateInput) {
 
     const auto report = RunProbe({"--stdin", Path("input"), "--pid", "/dev/null"});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().pid, report.command_pid);
 
     EXPECT_EQ(Read(Path("input")), "contents\n");
@@ -325,8 +305,7 @@ TEST_F(PipeRedirectionTest, OutputCanBeAPipe) {
 
     const auto report = RunProbeMode("streams", {"--stdout", path});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(ReadPipeOutput(reader_.get()), kStdoutContents);
@@ -337,8 +316,7 @@ TEST_F(PipeRedirectionTest, ErrorOutputCanBeAPipe) {
 
     const auto report = RunProbeMode("streams", {"--stderr", path});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     ReadProbe();
 
     EXPECT_EQ(ReadPipeOutput(reader_.get()), kStderrContents);
@@ -358,8 +336,7 @@ TEST_F(PipeRedirectionTest, InputCanBeAPipe) {
 
     const auto report = RunProbeMode("stdio", {"--stdin", path});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     EXPECT_EQ(ReadProbe().stdin_is_null, 0);
 
     EXPECT_EQ(Read(report.stdout_path), contents);
@@ -369,8 +346,7 @@ TEST_F(PipeRedirectionTest, InputCanBeAPipe) {
 TEST_F(PipeRedirectionTest, PidCanBeWrittenToAPipeBeforeTheCommandStarts) {
     const auto report = RunProbe({"--pid", DescriptorPath(writer_.get())});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     EXPECT_EQ(ReadPipeOutput(reader_.get()), std::to_string(state.pid) + "\n");
@@ -396,8 +372,7 @@ TEST_P(InheritedOutputTest, WritesFromTheStartOfAReusedRegularFile) {
 
     const auto report = RunProbeMode("streams", {option, path});
 
-    ASSERT_EQ(report.exit_code, 0)
-        << report.error;
+    ASSERT_EQ(report.exit_code, 0) << report.error;
     const auto state = ReadProbe();
 
     std::string expected = std::to_string(state.pid) + "\n";
@@ -428,10 +403,8 @@ TEST_F(RedirectionTest, MissingStdinFailsBeforeStartingTheCommand) {
     Write(Path("errors"), "keep stderr\n");
     Write(Path("pid"), "keep pid\n");
     const std::vector<std::string> options = {
-        "--stdin", Path("missing"),
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", Path("pid"),
+        "--stdin",  Path("missing"), "--stdout", Path("output"),
+        "--stderr", Path("errors"),  "--pid",    Path("pid"),
     };
 
     const auto report = RunProbe(options);
@@ -445,8 +418,8 @@ TEST_F(RedirectionTest, MissingStdinFailsBeforeStartingTheCommand) {
 TEST_F(RedirectionTest, StderrOpenFailurePreservesAUserSelectedStdoutFile) {
     Write(Path("output"), "keep this\n");
 
-    const auto report =
-        RunProbe({"--stdout", Path("output"), "--stderr", Path("missing/errors")});
+    const auto report
+        = RunProbe({"--stdout", Path("output"), "--stderr", Path("missing/errors")});
 
     ExpectOpenError(report, "stderr");
     EXPECT_EQ(Read(Path("output")), "keep this\n");
@@ -456,11 +429,8 @@ TEST_F(RedirectionTest, PidOpenFailurePreservesBothSelectedOutputs) {
     Write(Path("output"), "keep stdout\n");
     Write(Path("errors"), "keep stderr\n");
 
-    const auto report = RunProbe({
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--pid", Path("missing/pid")
-    });
+    const auto report = RunProbe({"--stdout", Path("output"), "--stderr",
+                                  Path("errors"), "--pid", Path("missing/pid")});
 
     ExpectOpenError(report, "pid");
     EXPECT_EQ(Read(Path("output")), "keep stdout\n");
@@ -470,11 +440,8 @@ TEST_F(RedirectionTest, PidOpenFailurePreservesBothSelectedOutputs) {
 // Command startup errors.
 
 TEST_F(RedirectionTest, ExecFailureKeepsUserSelectedLogsAndReportsTheirLocation) {
-    const auto report = Run({
-        "--stdout", Path("output"),
-        "--stderr", Path("errors"),
-        "--", Path("missing-command")
-    });
+    const auto report = Run({"--stdout", Path("output"), "--stderr", Path("errors"),
+                             "--", Path("missing-command")});
 
     EXPECT_EQ(report.exit_code, 1);
     EXPECT_TRUE(Read(Path("output")).empty());
@@ -493,8 +460,8 @@ TEST_F(RedirectionTest, ExecFailureCopiesTemporaryDiagnosticsToTheCaller) {
 }
 
 TEST_F(RedirectionTest, ExecFailureReportsAnExplicitStderrWithTemporaryStdout) {
-    const auto report =
-        Run({"--stderr", Path("errors"), "--", Path("missing-command")});
+    const auto report
+        = Run({"--stderr", Path("errors"), "--", Path("missing-command")});
 
     EXPECT_EQ(report.exit_code, 1);
     EXPECT_PRED_FORMAT2(testing::IsSubstring, "check stderr: " + Path("errors"),

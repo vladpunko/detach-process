@@ -121,8 +121,8 @@ static int extra_descriptors(int channel) {
         char* end;
         errno = 0;
         intmax_t fd = strtoimax(entry->d_name, &end, 10);
-        if (errno == 0 && end != entry->d_name && *end == '\0' && fd > STDERR_FILENO &&
-            fd != channel && fd != dirfd(directory)) {
+        if (errno == 0 && end != entry->d_name && *end == '\0' && fd > STDERR_FILENO
+            && fd != channel && fd != dirfd(directory)) {
             count += 1;
         }
     }
@@ -194,8 +194,8 @@ static int read_pid_file(const char* path, int64_t* pid) {
     char* end;
     errno = 0;
     const intmax_t value = strtoimax(text, &end, 10);
-    const int invalid_number =
-        errno != 0 || end == text || value <= 0 || value > INT64_MAX;
+    const int invalid_number
+        = errno != 0 || end == text || value <= 0 || value > INT64_MAX;
 
     while (end < text + length && isspace((unsigned char)*end)) {
         end += 1;
@@ -222,8 +222,8 @@ static int require_mode_argument(int argc, const char* mode) {
 // Prints each argument with its length to preserve empty values and newlines.
 static int print_arguments(int argc, char* argv[]) {
     for (int index = 3; index < argc; index += 1) {
-        if (printf("%zu:", strlen(argv[index])) < 0 ||
-            fputs(argv[index], stdout) == EOF || putchar('\n') == EOF) {
+        if (printf("%zu:", strlen(argv[index])) < 0 || fputs(argv[index], stdout) == EOF
+            || putchar('\n') == EOF) {
             return report_system_error("cannot write command arguments");
         }
     }
@@ -284,10 +284,10 @@ static int run_mode(int argc, char* argv[], ProbeState* state) {
     }
 
     if (strcmp(mode, "streams") == 0) {
-        return write_text(STDOUT_FILENO, "stdout one\n") &&
-               write_text(STDERR_FILENO, "stderr one\n") &&
-               write_text(STDOUT_FILENO, "stdout two\n") &&
-               write_text(STDERR_FILENO, "stderr two\n");
+        return write_text(STDOUT_FILENO, "stdout one\n")
+               && write_text(STDERR_FILENO, "stderr one\n")
+               && write_text(STDOUT_FILENO, "stdout two\n")
+               && write_text(STDERR_FILENO, "stderr two\n");
     }
 
     if (strcmp(mode, "arguments") == 0) {
@@ -402,9 +402,9 @@ static int capture_state(int channel, ProbeState* state) {
     state->sigusr1_blocked = sigismember(&mask, SIGUSR1);
     state->creation_mask = creation_mask;
 
-    return state->extra_descriptors >= 0 && state->stdin_is_null >= 0 &&
-           state->sigpipe_ignored >= 0 && state->sigchld_ignored >= 0 &&
-           state->sighup_ignored >= 0;
+    return state->extra_descriptors >= 0 && state->stdin_is_null >= 0
+           && state->sigpipe_ignored >= 0 && state->sigchld_ignored >= 0
+           && state->sighup_ignored >= 0;
 }
 
 // Keeps the probe alive for assertions and answers liveness checks until
@@ -453,8 +453,9 @@ int main(int argc, char* argv[]) {
     }
 
     // The socket is the readiness barrier, then remains open for liveness.
-    int success = capture_state(channel, &state) &&
-                  write_all(channel, &state, sizeof(state)) && wait_for_test(channel);
+    int success = capture_state(channel, &state)
+                  && write_all(channel, &state, sizeof(state))
+                  && wait_for_test(channel);
     close(channel);
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
