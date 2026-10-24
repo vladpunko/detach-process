@@ -12,6 +12,7 @@
 - Never weaken tests or coverage checks.
 - Preserve documented behavior and existing code style.
 - Commit each completed atomic change after relevant checks and tests pass.
+- Use short, single-line commit messages.
 
 ## Make commands
 
