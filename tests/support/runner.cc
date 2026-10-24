@@ -38,7 +38,7 @@ constexpr int kSetupErrorExitCode = 125;
 // Launch preparation.
 
 // Keeps capture files above standard descriptors so closed streams stay closed.
-int OpenCaptureFile(const std::string& path, const char* operation) {
+int OpenCaptureFile(const std::string& path) {
     int fd = open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
 
     // Keep `stdin`, `stdout` and `stderr` available for child setup.
@@ -47,7 +47,7 @@ int OpenCaptureFile(const std::string& path, const char* operation) {
         fd = fcntl(original.get(), F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
     }
 
-    EXPECT_TRUE(CheckSysCall(fd, operation)) << path;
+    EXPECT_TRUE(CheckSysCall(fd, "open capture file")) << path;
     return fd;
 }
 
@@ -229,8 +229,7 @@ testing::AssertionResult WaitForLauncher(RunReport& report) {
     if (!stop_status) {
         return stop_status;
     }
-    return testing::AssertionFailure()
-           << "detach did not return before the deadline";
+    return testing::AssertionFailure() << "detach did not return before the deadline";
 }
 
 // Extracts the PID and output paths from the public startup report of `detach`.
@@ -260,8 +259,7 @@ void ParseReport(const std::string& text, RunReport& report) {
 
 }  // namespace
 
-// Running `detach`.
-
+// Runs `detach` with isolated settings and captures its startup report.
 RunReport RunDetach(std::vector<std::string> arguments,
                     const std::string& directory,
                     const LaunchOptions& options) {
@@ -272,8 +270,8 @@ RunReport RunDetach(std::vector<std::string> arguments,
     }
 
     if (executable_path.empty()) {
-        ADD_FAILURE() << "No detach executable configured. "
-                      << "Set executable_path or DETACH_TEST_EXECUTABLE.";
+        ADD_FAILURE() << "no detach executable configured: "
+                      << "set executable_path or DETACH_TEST_EXECUTABLE";
         return {};
     }
 
@@ -282,13 +280,12 @@ RunReport RunDetach(std::vector<std::string> arguments,
     RunReport report;
 
     // Files can be read while the detached command is still running.
-    // `O_CLOEXEC` closes extra file descriptors when `detach` starts.
-    FileDescriptor output(OpenCaptureFile(output_path, "open report"));
+    FileDescriptor output(OpenCaptureFile(output_path));
     if (output.get() < 0) {
         return report;
     }
 
-    FileDescriptor errors(OpenCaptureFile(error_path, "open diagnostics"));
+    FileDescriptor errors(OpenCaptureFile(error_path));
     if (errors.get() < 0) {
         return report;
     }
@@ -301,6 +298,11 @@ RunReport RunDetach(std::vector<std::string> arguments,
     argv.push_back(nullptr);
 
     report.detach_pid = fork();
+    if (report.detach_pid < 0) {
+        EXPECT_TRUE(CheckSysCall(report.detach_pid, "fork test launcher"));
+        return report;
+    }
+
     if (report.detach_pid == 0) {
         MoveDescriptor(output.get(), STDOUT_FILENO, "capture launcher report");
         MoveDescriptor(errors.get(), STDERR_FILENO, "capture launcher errors");
@@ -311,11 +313,6 @@ RunReport RunDetach(std::vector<std::string> arguments,
         // A successful `execv` never returns to the test process.
         perror("exec detach");
         _exit(kSetupErrorExitCode);
-    }
-
-    EXPECT_TRUE(CheckSysCall(report.detach_pid, "fork test launcher"));
-    if (report.detach_pid < 0) {
-        return report;
     }
 
     // Wait for the direct child before reading the capture files.

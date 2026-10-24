@@ -9,8 +9,17 @@ TabWidth: 4
 # The number of columns to use for indentation.
 IndentWidth: 4
 
-# Preserve manual line breaks instead of wrapping at a fixed width.
-ColumnLimit: 0
+# Limit lines to 88 characters.
+ColumnLimit: 88
+
+# Align wrapped arguments with the first argument.
+AlignAfterOpenBracket: Align
+
+# Put each parameter on its own line when a signature wraps.
+BinPackParameters: false
+
+# Do not group wrapped parameters together on the next line.
+AllowAllParametersOfDeclarationOnNextLine: false
 
 # The way to use tab characters in the resulting file.
 UseTab: Never

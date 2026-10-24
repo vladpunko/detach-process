@@ -31,8 +31,7 @@ int ReadContents(int fd, std::string& contents) {
     while (true) {
         const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
         if (bytes_read > 0) {
-            contents.append(buffer.data(),
-                            static_cast<std::size_t>(bytes_read));
+            contents.append(buffer.data(), static_cast<std::size_t>(bytes_read));
             continue;
         }
 
@@ -63,6 +62,7 @@ int FileDescriptor::get() const {
     return fd_;
 }
 
+// Replaces the descriptor without losing the system error saved by the caller.
 void FileDescriptor::Reset(int new_fd) {
     if (fd_ == new_fd) {
         return;
@@ -80,6 +80,7 @@ void FileDescriptor::Reset(int new_fd) {
     errno = saved_errno;
 }
 
+// Reports the operation and system error when a syscall fails.
 testing::AssertionResult CheckSysCall(int status, const char* operation) {
     if (status >= 0) {
         return testing::AssertionSuccess();
@@ -93,11 +94,12 @@ testing::AssertionResult CheckSysCall(int status, const char* operation) {
 
 // Reading and writing.
 
+// Reads file contents and preserves any bytes received before a read error.
 std::string Read(const std::string& path) {
     FileDescriptor input(open(path.c_str(), O_RDONLY));
     if (input.get() < 0) {
         const int error = errno;
-        ADD_FAILURE() << "It is not possible to open "
+        ADD_FAILURE() << "it is not possible to open "
                       << path
                       << ": "
                       << std::strerror(error);
@@ -107,7 +109,7 @@ std::string Read(const std::string& path) {
     std::string contents;
     const int read_error = ReadContents(input.get(), contents);
     if (read_error != 0) {
-        ADD_FAILURE() << "It is not possible to read "
+        ADD_FAILURE() << "it is not possible to read "
                       << path
                       << ": "
                       << std::strerror(read_error);
@@ -116,30 +118,31 @@ std::string Read(const std::string& path) {
     return contents;
 }
 
+// Replaces file contents and checks for buffered errors after closing.
 void Write(const std::string& path, const std::string& contents) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    ASSERT_TRUE(output) << "Cannot open " << path;
+    ASSERT_TRUE(output) << "cannot open " << path;
 
     const auto bytes_to_write = static_cast<std::streamsize>(contents.size());
     output.write(contents.data(), bytes_to_write);
 
-    // Check after `close` so buffered write errors are included.
     output.close();
-    ASSERT_TRUE(output) << "Cannot write " << path;
+    ASSERT_TRUE(output) << "cannot write " << path;
 }
 
+// Collects pipe output until `EOF` or until a nonblocking read would wait.
 std::string ReadPipeOutput(int fd) {
     std::string contents;
     const int read_error = ReadContents(fd, contents);
-    if (read_error != 0 && read_error != EAGAIN &&
-        read_error != EWOULDBLOCK) {
-        ADD_FAILURE() << "Cannot read pipe output: "
+    if (read_error != 0 && read_error != EAGAIN && read_error != EWOULDBLOCK) {
+        ADD_FAILURE() << "cannot read pipe output: "
                       << std::strerror(read_error);
     }
 
     return contents;
 }
 
+// Checks whether a path exists and reports unexpected filesystem errors.
 bool Exists(const std::string& path) {
     struct stat info{};
     if (stat(path.c_str(), &info) == 0) {
@@ -148,7 +151,7 @@ bool Exists(const std::string& path) {
 
     const int error = errno;
     if (error != ENOENT && error != ENOTDIR) {
-        ADD_FAILURE() << "Cannot check whether path exists: "
+        ADD_FAILURE() << "cannot check whether path exists: "
                       << path
                       << ": "
                       << std::strerror(error);
@@ -157,11 +160,12 @@ bool Exists(const std::string& path) {
     return false;
 }
 
+// Reads permission bits so tests can verify file creation modes.
 mode_t GetPermission(const std::string& path) {
     struct stat stats = {};
     const int status = stat(path.c_str(), &stats);
 
-    EXPECT_TRUE(CheckSysCall(status, "stat")) << "Cannot read permissions for: "
+    EXPECT_TRUE(CheckSysCall(status, "stat")) << "cannot read permissions for: "
                                               << path;
 
     return stats.st_mode & 0777;
